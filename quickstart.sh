@@ -30,7 +30,13 @@ print_message "34" ""
 
 # Check if Azure CLI is installed
 if ! command -v az &>/dev/null; then
-    print_message "31" "Azure CLI not found. Please install Azure CLI to continue."
+    print_message "31" "Azure CLI not found. Please install Azure CLI and try again."
+    exit 1
+fi
+
+# Check if kubectl is installed
+if ! command -v kubectl &>/dev/null; then
+    print_message "31" "kubectl not found. Please install kubectl and try again."
     exit 1
 fi
 
@@ -65,7 +71,7 @@ echo "VM Type: $VM_TYPE"
 echo "Region: $REGION"
 
 # Prompt user to continue
-print_message "36" "Press any key to continue with the deployment, or Ctrl+C to cancel."
+print_message "36" "Press any key to confirm deployment details, or Ctrl+C to cancel."
 read -n 1 -s
 
 # Set the Azure subscription
@@ -80,14 +86,17 @@ az group create --name "$RESOURCE_GROUP" --location "$REGION"
 print_message "34" "Deploying AKS Cluster in Resource Group $RESOURCE_GROUP with VM type $VM_TYPE..."
 az aks create \
     --resource-group "$RESOURCE_GROUP" \
-    --name myAKSCluster \
+    --name "$RESOURCE_GROUP-akscluster" \
     --node-vm-size "$VM_TYPE" \
-    --enable-managed-identity \
+    --node-count 3 \
+    --enable-azure-container-storage azureDisk \
     --generate-ssh-keys
 
 # Get AKS credentials
 print_message "34" "Fetching AKS credentials..."
-az aks get-credentials --resource-group "$RESOURCE_GROUP" --name myAKSCluster
+az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$RESOURCE_GROUP-akscluster"
 
 # Final message
 print_message "32" "AKS Cluster setup is complete!"
+kubectl get sp -n acstor
+kubectl describe sp azuredisk -n acstor
