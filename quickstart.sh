@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-set -e -u -o pipefail
-
 # Function to print messages in color
 print_message() {
     local color_code="$1"
@@ -46,28 +44,79 @@ if ! az account show &>/dev/null; then
     exit 1
 fi
 
-# Prompt user for inputs with default values
-print_message "36" "Please enter your Azure Subscription ID:"
-read -r SUBSCRIPTION_ID
+# Prompt user for subscription, and switch to that subscription
+IFS=$'\n' read -r -d '' -a valid_subscriptions < <(az account list --query "@[*].name" -o tsv | sort && printf '\0')
+selected_subscription_index=0
+start_index=0
+while true; do
+    end_index=$((start_index + 10))
+    clear
+    print_message "36" "🏷️ Select an Azure subscription to create your resources: "
+    if [ ${#valid_subscriptions[@]} -eq 0 ]; then
+        print_message "31" "No subscriptions found."
+        break
+    fi
+    for ((i = start_index; i <= end_index && i < ${#valid_subscriptions[@]}; i++)); do
+        if [ $i -eq $selected_subscription_index ]; then
+            print_message "36" "➤ ${valid_subscriptions[$i]}"
+        else
+            echo "  ${valid_subscriptions[$i]}"
+        fi
+    done
+    if [ $end_index -lt ${#valid_subscriptions[@]} ]; then
+        print_message "36" "Press 'Down' or 'Right' arrow key to see more subscriptions"
+    fi
+    echo ""
+    read -rsn3 key # Read up to 3 characters
+    if [[ $key == $'\e[A' ]] || [[ $key == $'\e[D' ]]; then
+        # Up or Left arrow key
+        if [ $selected_subscription_index -gt 0 ]; then
+            selected_subscription_index=$((selected_subscription_index - 1))
+        fi
+        if [ $selected_subscription_index -eq $start_index ] && [ $start_index -gt 0 ]; then
+            start_index=$((start_index - 1))
+        fi
+    elif [[ $key == $'\e[B' ]] || [[ $key == $'\e[C' ]]; then
+        # Down or Right arrow key
+        if [ $selected_subscription_index -lt $((${#valid_subscriptions[@]} - 1)) ]; then
+            selected_subscription_index=$((selected_subscription_index + 1))
+        fi
+        if [ $selected_subscription_index -eq $end_index ] && [ $end_index -lt ${#valid_subscriptions[@]} ]; then
+            start_index=$((start_index + 1))
+        fi
+    elif [[ $key == $'\r' ]] || [[ $key == $'' ]]; then
+        # Enter key
+        SUBSCRIPTION_ID=${valid_subscriptions[$selected_subscription_index]}
+        print_message "32" "Subscription: $SUBSCRIPTION_ID"
+        break
+    fi
+done
 
-print_message "36" "Please enter the name of the Resource Group to create:"
+print_message "34" ""
+print_message "36" "👪 Please enter the name of the resource group to create:"
 read -r RESOURCE_GROUP
+print_message "32" "Resource group: $RESOURCE_GROUP"
 
 DEFAULT_VM_SIZE="Standard_D4s_v5"
-print_message "36" "Please enter the type of VM to use for the AKS Cluster (default: $DEFAULT_VM_SIZE):"
+print_message "34" ""
+print_message "36" "🤖 Please enter the VM SKU to use for the AKS Cluster (default: $DEFAULT_VM_SIZE):"
 read -r VM_TYPE
 VM_TYPE=${VM_TYPE:-$DEFAULT_VM_SIZE}
+print_message "32" "VM SKU: $VM_TYPE"
 
 DEFAULT_REGION="eastus2"
-print_message "36" "Please enter the region you would like your resources deployed in (default: $DEFAULT_REGION):"
+print_message "34" ""
+print_message "36" "🌎 Please enter the region you would like your resources deployed in (default: $DEFAULT_REGION):"
 read -r REGION
 REGION=${REGION:-$DEFAULT_REGION}
+print_message "32" "Region: $REGION"
 
 # Show confirmation of the entered options
+print_message "34" ""
 print_message "34" "You have entered the following details:"
-echo "Subscription ID: $SUBSCRIPTION_ID"
-echo "Resource Group: $RESOURCE_GROUP"
-echo "VM Type: $VM_TYPE"
+echo "Subscription: $SUBSCRIPTION_ID"
+echo "Resource group name: $RESOURCE_GROUP"
+echo "VM SKU: $VM_TYPE"
 echo "Region: $REGION"
 
 # Prompt user to continue
