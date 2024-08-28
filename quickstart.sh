@@ -15,16 +15,16 @@ print_centered() {
 }
 
 # Greeting banner
-print_message "34" ""
+echo ""
 print_centered "    ___                      "
 print_centered "   /   |____  __  __________ "
 print_centered "  / /| /_  / / / / / ___/ _ \\"
 print_centered " / ___ |/ /_/ /_/ / /  /  __/"
 print_centered "/_/  |_/___/\\__,_/_/   \\___/ "
-print_message "34" ""
+echo ""
 print_centered "Welcome to the Azure Container Storage quickstart guide!"
 print_centered "https://aka.ms/acstor-quickstart"
-print_message "34" ""
+echo ""
 
 # Check if Azure CLI is installed
 if ! command -v az &>/dev/null; then
@@ -50,7 +50,7 @@ selected_subscription_index=0
 start_index=0
 while true; do
     end_index=$((start_index + 19))
-    clear
+    clear -x
     print_message "36" "🏷️  Select an Azure subscription to create your resources: "
     if [ ${#valid_subscriptions[@]} -eq 0 ]; then
         print_message "31" "No subscriptions found."
@@ -103,7 +103,7 @@ selected_backing_option_index=0
 start_index=0
 while true; do
     end_index=$((start_index + 3))
-    clear
+    clear -x
     print_message "36" "💾  Select the backing storage option for the AKS cluster: "
     for ((i = start_index; i <= end_index && i < ${#backing_options[@]}; i++)); do
         if [ $i -eq $selected_backing_option_index ]; then
@@ -153,7 +153,7 @@ selected_vm_option_index=0
 start_index=0
 while true; do
     end_index=$((start_index + 9))
-    clear
+    clear -x
     print_message "36" "💻  Select the VM SKU for the AKS cluster: "
     for ((i = start_index; i <= end_index && i < ${#vm_options[@]}; i++)); do
         if [ $i -eq $selected_vm_option_index ]; then
@@ -255,7 +255,7 @@ selected_region_index=0
 start_index=0
 while true; do
     end_index=$((start_index + 19)) # Adjusted to display 10 items at a time
-    clear
+    clear -x
     print_message "36" "🌎  Select the region your resources will be deployed in (https://aka.ms/acstor/regions): "
     for ((i = start_index; i <= end_index && i < ${#regions[@]}; i++)); do
         if [ $i -eq $selected_region_index ]; then
@@ -299,11 +299,12 @@ print_message "32" "Resource group: $RESOURCE_GROUP"
 
 # Show confirmation of the entered options
 print_message "34" ""
-print_message "34" "You have entered the following details:"
+print_message "36" "🧾  You have entered the following details:"
 echo "Subscription: $SUBSCRIPTION_ID"
-echo "Resource group name: $RESOURCE_GROUP"
+echo "Backing option: $BACKING_OPTION"
 echo "VM SKU: $VM_TYPE"
 echo "Region: $REGION"
+echo "Resource group name: $RESOURCE_GROUP"
 
 # Prompt user to continue
 print_message "36" "Press any key to confirm deployment details, or Ctrl+C to cancel."
