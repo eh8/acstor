@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 # Function to print messages in color
 print_message() {
     local color_code="$1"
@@ -15,16 +17,17 @@ print_centered() {
 }
 
 # Greeting banner
-echo ""
 print_centered "    ___                      "
 print_centered "   /   |____  __  __________ "
 print_centered "  / /| /_  / / / / / ___/ _ \\"
 print_centered " / ___ |/ /_/ /_/ / /  /  __/"
 print_centered "/_/  |_/___/\\__,_/_/   \\___/ "
 echo ""
-print_centered "Welcome to the Azure Container Storage quickstart guide!"
-print_centered "https://aka.ms/acstor-quickstart"
+print_centered "This script helps you create an AKS cluster with Azure Container Storage installed."
 echo ""
+print_centered "Have fun!"
+echo ""
+print_centered "https://aka.ms/acstor"
 
 # Check if Azure CLI is installed
 if ! command -v az &>/dev/null; then
@@ -51,7 +54,7 @@ start_index=0
 while true; do
     end_index=$((start_index + 19))
     clear -x
-    print_message "36" "🏷️  Select an Azure subscription to create your resources: "
+    print_message "36" "🏷️   Select an Azure subscription to create your resources: "
     if [ ${#valid_subscriptions[@]} -eq 0 ]; then
         print_message "31" "No subscriptions found."
         break
@@ -142,11 +145,51 @@ done
 
 # Multiple choice for VM SKU
 if [[ $BACKING_OPTION == "Azure Disk" || $BACKING_OPTION == "Elastic SAN" ]]; then
-    vm_options=("Standard_D2s_v3" "Standard_D4s_v3" "Standard_D8s_v3" "Standard_D16s_v3" "Standard_D32s_v3" "Standard_D64s_v3" "Standard_D2s_v4" "Standard_D4s_v4" "Standard_D8s_v4" "Standard_D16s_v4")
+    vm_options=(
+        "Standard_D4s_v5"
+        "Standard_D8s_v5"
+        "Standard_D16s_v5"
+        "Standard_D32s_v5"
+        "Standard_D64s_v5"
+        "Standard_D4s_v4"
+        "Standard_D8s_v4"
+        "Standard_D16s_v4"
+        "Standard_D32s_v4"
+        "Standard_D64s_v4"
+        "Standard_D4s_v3"
+        "Standard_D8s_v3"
+        "Standard_D16s_v3"
+        "Standard_D32s_v3"
+        "Standard_D64s_v3"
+    )
 elif [[ $BACKING_OPTION == "Ephemeral Disk (with local NVMe)" ]]; then
-    vm_options=("Standard_L8s_v3" "Standard_L16s_v3" "Standard_L32s_v3" "Standard_L64s_v3" "Standard_L80s_v3" "Standard_L96s_v3" "Standard_L8s_v2" "Standard_L16s_v2" "Standard_L32s_v2" "Standard_L64s_v2")
+    vm_options=(
+        "Standard_L8s_v3"
+        "Standard_L16s_v3"
+        "Standard_L32s_v3"
+        "Standard_L64s_v3"
+        "Standard_L80s_v3"
+        "Standard_L96s_v3"
+        "Standard_L8s_v2"
+        "Standard_L16s_v2"
+        "Standard_L32s_v2"
+        "Standard_L64s_v2"
+    )
 elif [[ $BACKING_OPTION == "Ephemeral Disk (with temporary SSD)" ]]; then
-    vm_options=("Standard_E2s_v3" "Standard_E4s_v3" "Standard_E8s_v3" "Standard_E16s_v3" "Standard_E20s_v3" "Standard_E32s_v3" "Standard_E64s_v3" "Standard_E2s_v4" "Standard_E4s_v4" "Standard_E8s_v4")
+    vm_options=(
+        "Standard_E4s_v3"
+        "Standard_E8s_v3"
+        "Standard_E16s_v3"
+        "Standard_E20s_v3"
+        "Standard_E32s_v3"
+        "Standard_E64s_v3"
+        "Standard_E4s_v4"
+        "Standard_E8s_v4"
+        "Standard_E16s_v4"
+        "Standard_E20s_v4"
+        "Standard_E32s_v4"
+        "Standard_E64s_v4"
+    )
 fi
 
 selected_vm_option_index=0
@@ -184,8 +227,8 @@ while true; do
             start_index=$((start_index + 1))
         fi
     elif [[ $key == $'\r' ]] || [[ $key == $'' ]]; then
-        VM_TYPE=${vm_options[$selected_vm_option_index]}
-        print_message "32" "VM SKU: $VM_TYPE"
+        VM_SKU=${vm_options[$selected_vm_option_index]}
+        print_message "32" "VM SKU: $VM_SKU"
         break
     fi
 done
@@ -298,19 +341,22 @@ read -r RESOURCE_GROUP
 print_message "32" "Resource group: $RESOURCE_GROUP"
 
 # Show confirmation of the entered options
-print_message "34" ""
+echo ""
 print_message "36" "🧾  You have entered the following details:"
-echo "Subscription: $SUBSCRIPTION_ID"
-echo "Backing option: $BACKING_OPTION"
-echo "VM SKU: $VM_TYPE"
-echo "Region: $REGION"
-echo "Resource group name: $RESOURCE_GROUP"
+echo ""
+print_message "32" "Subscription: $SUBSCRIPTION_ID"
+print_message "32" "Backing option: $BACKING_OPTION"
+print_message "32" "VM SKU: $VM_SKU"
+print_message "32" "Region: $REGION"
+print_message "32" "Resource group: $RESOURCE_GROUP"
+echo ""
 
 # Prompt user to continue
 print_message "36" "Press any key to confirm deployment details, or Ctrl+C to cancel."
 read -n 1 -s
 
 # Set the Azure subscription
+clear -x
 print_message "34" "Setting Azure Subscription to $SUBSCRIPTION_ID..."
 az account set --subscription "$SUBSCRIPTION_ID"
 
@@ -340,7 +386,7 @@ esac
 az aks create \
     --resource-group "$RESOURCE_GROUP" \
     --name "$RESOURCE_GROUP-akscluster" \
-    --node-vm-size "$VM_TYPE" \
+    --node-vm-size "$VM_SKU" \
     --node-count 3 \
     --enable-azure-container-storage "$STORAGE_OPTION" \
     ${STORAGE_POOL_OPTION:+--storage-pool-option "$STORAGE_POOL_OPTION"} \
