@@ -399,4 +399,3 @@ az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$RESOURCE_GROU
 # Final message
 print_message "32" "AKS Cluster setup is complete!"
 kubectl get sp -n acstor
-kubectl describe sp azuredisk -n acstor
