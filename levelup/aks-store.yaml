@@ -42,7 +42,7 @@ spec:
       volumes:
         - name: mongodb-ephemeralpv
           persistentVolumeClaim:
-            claimName: ephemeralpvc-1
+            claimName: ephemeralpvc-mongodb
 ---
 apiVersion: v1
 kind: Service
@@ -115,7 +115,7 @@ spec:
                 path: enabled_plugins
         - name: rabbitmq-ephemeralpv
           persistentVolumeClaim:
-            claimName: ephemeralpvc-2
+            claimName: ephemeralpvc-rabbitmq
 ---
 apiVersion: v1
 kind: Service
@@ -202,7 +202,8 @@ spec:
             [
               "sh",
               "-c",
-              "until nc -zv rabbitmq 5672; do echo waiting for rabbitmq; sleep 2; done;",
+              "until nc -zv rabbitmq 5672; do echo waiting for rabbitmq; sleep
+              2; done;",
             ]
           resources:
             requests:
