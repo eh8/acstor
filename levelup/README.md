@@ -1,19 +1,6 @@
 # LevelUp demo: Using Azure Container Storage for a sample store application
 
-[Azure Container Storage](container-storage-introduction.md) is a cloud-based
-volume management, deployment, and orchestration service built natively for
-containers. In this tutorial, you'll create an
-[Azure Kubernetes Service (AKS)](/azure/aks/intro-kubernetes) cluster and
-install the latest production version of Azure Container Storage on the cluster.
-If you already have an AKS cluster deployed, we recommend installing Azure
-Container Storage [using this QuickStart](container-storage-aks-quickstart.md)
-instead of following the manual steps in this tutorial.
-
-> [!IMPORTANT] 
-> Azure Container Storage is now generally available (GA) beginning
-> with version 1.1.0. The GA version is recommended for production workloads.
-
-## What you'll accomplish
+Welcome to this LevelUp demo! Today, you'll be accomplishing the following:
 
 - Create a resource group
 - Install an Azure CLI extension
@@ -78,14 +65,6 @@ az account set --subscription <subscription-id>
 
 ## Create a resource group
 
-An Azure resource group is a logical group that holds your Azure resources that
-you want to manage as a group. When you create a resource group, you're prompted
-to specify a location. This location is:
-
-- The storage location of your resource group metadata.
-- Where your resources will run in Azure if you don't specify another region
-  during resource creation.
-
 Create a resource group using the `az group create` command. Replace
 `<resource-group-name>` with the name of the resource group you want to create,
 and replace `<location>` with an Azure region such as _eastus_, _westus2_,
@@ -111,7 +90,7 @@ this:
 }
 ```
 
-## Choose a data storage option and virtual machine type
+<!-- ## Choose a data storage option and virtual machine type
 
 Before you create your cluster, you should understand which back-end storage
 option you'll ultimately choose to create your storage pool. This is because
@@ -163,9 +142,7 @@ In a storage pool type Ephemeral Disk - Local NVMe with the standard (default)
 performance tier, if you're using multiple VM SKU types for your cluster nodes,
 the 25% of CPU cores consumed applies to the smallest SKU used. For example, if
 you're using a mix of 8-core and 16-core VM types, resource consumption is 2
-cores. You can
-[update the performance tier](use-container-storage-with-local-disk.md#optimize-performance-when-using-local-nvme)
-to use a greater percentage of cores and achieve greater IOPS.
+cores.
 
 ### Ensure VM type for your cluster meets the following criteria
 
@@ -186,7 +163,7 @@ choose a VM type that supports
   **standard_l8s_v3**.
 - If you intend to use Ephemeral Disk with temp SSD, choose a VM that has a temp
   SSD disk such as
-  [Ev3 and Esv3-series](/azure/virtual-machines/ev3-esv3-series).
+  [Ev3 and Esv3-series](/azure/virtual-machines/ev3-esv3-series). -->
 
 ## Create a new AKS cluster and install Azure Container Storage
 
@@ -270,10 +247,9 @@ configurations. If you specify three replicas, you must have at least three
 nodes in your AKS cluster. If you specify five replicas, you must have at least
 five nodes.
 
-> [!NOTE] 
-> Because Ephemeral Disk storage pools consume all the available NVMe
-> disks, you must delete any existing local NVMe storage pools before creating a
-> new storage pool.
+> Because Ephemeral Disk storage pools consume all the available NVMe disks, you
+> must delete any existing local NVMe storage pools before creating a new
+> storage pool.
 
 1. Delete the default storage pool that was created during installation. We will
    recreate it with replication enabled.
@@ -338,9 +314,8 @@ acstor-azuredisk-internal   disk.csi.azure.com               Retain          Wai
 acstor-ephemeraldisk-nvme        containerstorage.csi.azure.com   Delete          WaitForFirstConsumer   true                   2m27s
 ```
 
-> [!IMPORTANT] 
-> Don't use the storage class that's marked **internal**. It's an
-> internal storage class that's needed for Azure Container Storage to work.
+> Don't use the storage class that's marked **internal**. It's an internal
+> storage class that's needed for Azure Container Storage to work.
 
 ### 4. Create a persistent volume claim
 
@@ -572,9 +547,8 @@ performance tier.
 | `Standard` (default) | 25% of total            |
 | `Premium`            | 50% of total VM cores   |
 
-> [!NOTE] 
-> RAM and hugepages consumption will stay consistent across all tiers: 1
-> GiB of RAM and 2 GiB of hugepages.
+> RAM and hugepages consumption will stay consistent across all tiers: 1 GiB of
+> RAM and 2 GiB of hugepages.
 
 Once you've identified the performance tier that aligns best to your needs, you
 can run the following command to update the performance tier of your Azure
