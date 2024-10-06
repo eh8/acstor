@@ -9,7 +9,8 @@ If you already have an AKS cluster deployed, we recommend installing Azure
 Container Storage [using this QuickStart](container-storage-aks-quickstart.md)
 instead of following the manual steps in this tutorial.
 
-> [!IMPORTANT] Azure Container Storage is now generally available (GA) beginning
+> [!IMPORTANT] 
+> Azure Container Storage is now generally available (GA) beginning
 > with version 1.1.0. The GA version is recommended for production workloads.
 
 ## What you'll accomplish
@@ -269,7 +270,8 @@ configurations. If you specify three replicas, you must have at least three
 nodes in your AKS cluster. If you specify five replicas, you must have at least
 five nodes.
 
-> [!NOTE] Because Ephemeral Disk storage pools consume all the available NVMe
+> [!NOTE] 
+> Because Ephemeral Disk storage pools consume all the available NVMe
 > disks, you must delete any existing local NVMe storage pools before creating a
 > new storage pool.
 
@@ -336,7 +338,8 @@ acstor-azuredisk-internal   disk.csi.azure.com               Retain          Wai
 acstor-ephemeraldisk-nvme        containerstorage.csi.azure.com   Delete          WaitForFirstConsumer   true                   2m27s
 ```
 
-> [!IMPORTANT] Don't use the storage class that's marked **internal**. It's an
+> [!IMPORTANT] 
+> Don't use the storage class that's marked **internal**. It's an
 > internal storage class that's needed for Azure Container Storage to work.
 
 ### 4. Create a persistent volume claim
@@ -569,7 +572,8 @@ performance tier.
 | `Standard` (default) | 25% of total            |
 | `Premium`            | 50% of total VM cores   |
 
-> [!NOTE] RAM and hugepages consumption will stay consistent across all tiers: 1
+> [!NOTE] 
+> RAM and hugepages consumption will stay consistent across all tiers: 1
 > GiB of RAM and 2 GiB of hugepages.
 
 Once you've identified the performance tier that aligns best to your needs, you
