@@ -16,20 +16,21 @@ Welcome to this LevelUp demo! Today, you'll be accomplishing the following:
   [free account](https://azure.microsoft.com/free/?WT.mc_id=A261C142F) before
   you begin.
 
-- This article requires the latest version (2.35.0 or later) of the Azure CLI.
-  See [How to install the Azure CLI](/cli/azure/install-azure-cli). If you're
-  using the Bash environment in Azure Cloud Shell, the latest version is already
-  installed. If you plan to run the commands locally instead of in Azure Cloud
-  Shell, be sure to run them with administrative privileges. For more
-  information, see
-  [Get started with Azure Cloud Shell](/azure/cloud-shell/get-started).
+- This article requires the latest version (2.35.0 or later) of the Azure CLI
+  with the `k8s-extension` extension installed. See
+  [How to install the Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli).
+  If you're using the Bash environment in Azure Cloud Shell, the latest version
+  is already installed. If you plan to run the commands locally instead of in
+  Azure Cloud Shell, be sure to run them with administrative privileges. For
+  more information, see
+  [Get started with Azure Cloud Shell](https://learn.microsoft.com/en-us/azure/cloud-shell/get-started).
 
 - You'll need the Kubernetes command-line client, `kubectl`. It's already
   installed if you're using Azure Cloud Shell, or you can install it locally by
   running the `az aks install-cli` command.
 
 - Check if your target region is supported in
-  [Azure Container Storage regions](container-storage-introduction.md#regional-availability).
+  [Azure Container Storage regions](https://learn.microsoft.com/en-us/azure/storage/container-storage/container-storage-introduction#regional-availability).
 
 ## Getting started
 
@@ -37,7 +38,8 @@ Welcome to this LevelUp demo! Today, you'll be accomplishing the following:
 
 - [Launch Azure Cloud Shell](https://shell.azure.com), or if you're using a
   local installation, sign in to the Azure CLI by using the
-  [az login](/cli/azure/reference-index#az-login) command.
+  [az login](https://learn.microsoft.com/en-us/cli/azure/reference-index#az-login)
+  command.
 
 - If you're using Azure Cloud Shell, you might be prompted to mount storage.
   Select the Azure subscription where you want to create the storage account and
@@ -217,7 +219,7 @@ kubectl describe sp <storage-pool-name> -n acstor
 
 If the `Message` doesn't say `StoragePool is ready`, then your storage pool is
 still creating or ran into a problem. See
-[Troubleshoot Azure Container Storage](troubleshoot-container-storage.md).
+[Troubleshoot Azure Container Storage](https://learn.microsoft.com/en-us/azure/storage/container-storage/troubleshoot-container-storage).
 
 ## Create and attach persistent volumes
 
@@ -371,7 +373,7 @@ class.
 
    When you change the storage size of your volumes, make sure the size is less
    than the available capacity of a single node's ephemeral disk. See
-   [Check node ephemeral disk capacity](#check-node-ephemeral-disk-capacity).
+   [Check node ephemeral disk capacity](https://learn.microsoft.com/en-us/azure/storage/container-storage/use-container-storage-with-local-nvme-replication#check-node-ephemeral-disk-capacity).
 
 4. Apply the YAML manifest file to create the PVC.
 
@@ -491,7 +493,7 @@ kubectl delete pods <pod-name>
 
 To reattach a persistent volume, simply reference the persistent volume claim
 name in the YAML manifest file as described in
-[Deploy a pod and attach a persistent volume](#5-deploy-a-pod-and-attach-a-persistent-volume).
+[Deploy a pod and attach a persistent volume](https://learn.microsoft.com/en-us/azure/storage/container-storage/use-container-storage-with-local-nvme-replication#5-deploy-a-pod-and-attach-a-persistent-volume).
 
 To check which persistent volume a persistent volume claim is bound to, run:
 
