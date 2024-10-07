@@ -170,9 +170,11 @@ choose a VM type that supports
 Run the following command to create a new AKS cluster, install Azure Container
 Storage, and create a storage pool. Replace `<cluster-name>` and
 `<resource-group>` with your own values, and specify which VM type you want to
-use. Replace `<storage-pool-type>` with `azureDisk`, `ephemeralDisk`, or
-`elasticSan`. If you select `ephemeralDisk`, you must also specify
-`--storage-pool-option`, and the values can be `NVMe` or `Temp`.
+use. For today's demo, we will be using Azure Container Storage with ephemeral
+disks. We will specify `ephemeralDisk` with the
+`--enable-azure-container-storage` flag. Note that when selecting
+`ephemeralDisk`, you must also specify `--storage-pool-option`, and we will
+specify `NVMe` accordingly.
 
 ```bash
 az aks create -n <cluster-name> -g <resource-group> --node-vm-size Standard_L8s_v3 --node-count 3 --enable-azure-container-storage ephemeralDisk --storage-pool-option NVMe --generate-ssh-keys
@@ -180,9 +182,7 @@ az aks create -n <cluster-name> -g <resource-group> --node-vm-size Standard_L8s_
 
 The deployment will take 10-15 minutes. When it completes, you'll have an AKS
 cluster with Azure Container Storage installed, the components for your chosen
-storage pool type enabled, and a default storage pool. If you want to enable
-additional storage pool types to create additional storage pools, see
-[Enable additional storage pool types](container-storage-aks-quickstart.md#enable-additional-storage-pool-types).
+storage pool type enabled, and a default storage pool.
 
 ## Connect to the new cluster
 
@@ -310,7 +310,7 @@ storage class called `acstor-<storage-pool-name>`.
 
 ```output
 $ kubectl get sc | grep "^acstor-"
-acstor-azuredisk-internal   disk.csi.azure.com               Retain          WaitForFirstConsumer   true                   65m
+acstor-azuredisk-internal        disk.csi.azure.com               Retain          WaitForFirstConsumer   true                   65m
 acstor-ephemeraldisk-nvme        containerstorage.csi.azure.com   Delete          WaitForFirstConsumer   true                   2m27s
 ```
 
