@@ -428,12 +428,11 @@ in our newly created persistent volumes.
    service/store-front created
    deployment.apps/store-admin created
    service/store-admin created
-   deployment.apps/virtual-customer created
-   deployment.apps/virtual-worker created
    ```
 
 4. To find the public IP address of your storefront and admin panel, wait a few
-   minutes for the external IPs to be shown.
+   minutes for the external IPs to be shown. Your IP addresses will differ from
+   the ones shown below.
 
    ```bash
    kubectl get service -n pets
