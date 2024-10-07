@@ -4,7 +4,7 @@ metadata:
   name: mongodb
 spec:
   serviceName: mongodb
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: mongodb
@@ -69,7 +69,7 @@ metadata:
   name: rabbitmq
 spec:
   serviceName: rabbitmq
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: rabbitmq
@@ -138,7 +138,7 @@ kind: Deployment
 metadata:
   name: order-service
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: order-service
@@ -231,7 +231,7 @@ kind: Deployment
 metadata:
   name: makeline-service
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: makeline-service
@@ -308,7 +308,7 @@ kind: Deployment
 metadata:
   name: product-service
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: product-service
@@ -367,7 +367,7 @@ kind: Deployment
 metadata:
   name: store-front
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: store-front
@@ -435,7 +435,7 @@ kind: Deployment
 metadata:
   name: store-admin
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: store-admin
@@ -504,7 +504,7 @@ spec:
 # metadata:
 #   name: virtual-customer
 # spec:
-#   replicas: 1
+#   replicas: 3
 #   selector:
 #     matchLabels:
 #       app: virtual-customer
@@ -536,7 +536,7 @@ spec:
 # metadata:
 #   name: virtual-worker
 # spec:
-#   replicas: 1
+#   replicas: 3
 #   selector:
 #     matchLabels:
 #       app: virtual-worker
