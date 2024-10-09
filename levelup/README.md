@@ -12,10 +12,6 @@ Welcome to this LevelUp demo! Today, you will:
 
 ## Prerequisites
 
-- If you don't have an Azure subscription, create a
-  [free account](https://azure.microsoft.com/free/?WT.mc_id=A261C142F) before
-  you begin.
-
 - This article requires the latest version (2.35.0 or later) of the Azure CLI
   with the `k8s-extension` extension installed. See
   [How to install the Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli).
@@ -81,10 +77,10 @@ this:
 
 ```output
 {
-  "id": "/subscriptions/<guid>/resourceGroups/myContainerStorageRG",
+  "id": "/subscriptions/<guid>/resourceGroups/<resource-group-name>",
   "location": "eastus",
   "managedBy": null,
-  "name": "myContainerStorageRG",
+  "name": "<resource-group-name>",
   "properties": {
     "provisioningState": "Succeeded"
   },
@@ -157,16 +153,16 @@ creating your persistent volume claims.
 
 Follow these steps to create and attach a persistent volume.
 
-### 1. Update your Azure Container Storage installation
+<!-- ### 1. Update your Azure Container Storage installation
 
 Run the following command to update your Azure Container Storage installation to
 allow the creation of persistent volumes from ephemeral disk storage pools.
 
 ```bash
 az aks update -n <cluster-name> -g <resource-group> --enable-azure-container-storage ephemeralDisk --storage-pool-option NVMe --ephemeral-disk-volume-type PersistentVolumeWithAnnotation
-```
+``` -->
 
-### 2. Create a storage pool with volume replication
+### 1. Create a storage pool with volume replication
 
 Follow these steps to create a storage pool using local NVMe with replication.
 Azure Container Storage currently supports three-replica and five-replica
@@ -228,7 +224,7 @@ five nodes.
 When the storage pool is created, Azure Container Storage will create a storage
 class on your behalf, using the naming convention `acstor-<storage-pool-name>`.
 
-### 3. Display the available storage classes
+### 2. Display the available storage classes
 
 When the storage pool is ready to use, you must select a storage class to define
 how storage is dynamically created when creating and deploying volumes.
@@ -322,7 +318,7 @@ class.
 
 Once the PVC is created, it's ready for use by a pod. -->
 
-### 5. Deploy a pod and attach a persistent volume
+### 3. Deploy a pod and attach a persistent volume
 
 We will now deploy our store application with our MongoDB and RabbitMQ data held
 in our newly created persistent volumes.
@@ -349,6 +345,7 @@ in our newly created persistent volumes.
    You should see output similar to the following:
 
    ```output
+   statefulset.apps/mongodb created
    service/mongodb created
    configmap/rabbitmq-enabled-plugins created
    statefulset.apps/rabbitmq created
@@ -363,6 +360,8 @@ in our newly created persistent volumes.
    service/store-front created
    deployment.apps/store-admin created
    service/store-admin created
+   deployment.apps/virtual-customer created
+   deployment.apps/virtual-worker created
    ```
 
 5. To find the public IP address of your storefront and admin panel, wait a few
