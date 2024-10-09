@@ -1,6 +1,6 @@
 # LevelUp demo: Using Azure Container Storage for a sample store application
 
-Welcome to this LevelUp demo! Today, you'll be accomplishing the following:
+Welcome to this LevelUp demo! Today, you will:
 
 - Create a resource group
 - Install an Azure CLI extension
@@ -91,81 +91,6 @@ this:
   "tags": null
 }
 ```
-
-<!-- ## Choose a data storage option and virtual machine type
-
-Before you create your cluster, you should understand which back-end storage
-option you'll ultimately choose to create your storage pool. This is because
-different storage services work best with different virtual machine (VM) types
-as cluster nodes, and you'll deploy your cluster before you create the storage
-pool.
-
-### Data storage options
-
-- ~~**[Azure Elastic SAN](../elastic-san/elastic-san-introduction.md)**: Azure
-  Elastic SAN is a good fit for general purpose databases, streaming and
-  messaging services, CD/CI environments, and other tier 1/tier 2 workloads.
-  Storage is provisioned on demand per created volume and volume snapshot.
-  Multiple clusters can access a single SAN concurrently, however persistent
-  volumes can only be attached by one consumer at a time.~~
-
-- ~~**[Azure Disks](/azure/virtual-machines/managed-disks-overview)**: Azure
-  Disks are a good fit for databases such as MySQL, MongoDB, and PostgreSQL.
-  Storage is provisioned per target container storage pool size and maximum
-  volume size.~~
-
-- **Ephemeral Disk**: This option uses local NVMe or temp SSD drives on the AKS
-  nodes and is extremely latency sensitive (low sub-ms latency), so it's best
-  for applications with no data durability requirement or with built-in data
-  replication support such as Cassandra. AKS discovers the available ephemeral
-  storage on AKS nodes and acquires the drives for volume deployment.
-
-### Resource consumption
-
-Azure Container Storage requires certain node resources to run components for
-the service. Based on your storage pool type selection, which you'll specify
-when you install Azure Container Storage, these are the resources that will be
-consumed:
-
-| **Storage pool type**                       | **CPU cores**                                  | **RAM** |
-| ------------------------------------------- | ---------------------------------------------- | ------- |
-| Azure Elastic SAN                           |  None                                          | None    |
-| Azure Disks                                 | 1                                              | 1 GiB   |
-| Ephemeral Disk - Temp SSD                   | 1                                              | 1 GiB   |
-| Ephemeral Disk - Local NVMe (standard tier) | 25% of cores (performance tier can be updated) | 1 GiB   |
-
-The resources consumed are per node, and will be consumed for each node in the
-node pool where Azure Container Storage will be installed. If your nodes don't
-have enough resources, Azure Container Storage will fail to run. Kubernetes will
-automatically re-try to initialize these failed pods, so if resources get
-liberated, these pods can be initialized again.
-
-In a storage pool type Ephemeral Disk - Local NVMe with the standard (default)
-performance tier, if you're using multiple VM SKU types for your cluster nodes,
-the 25% of CPU cores consumed applies to the smallest SKU used. For example, if
-you're using a mix of 8-core and 16-core VM types, resource consumption is 2
-cores.
-
-### Ensure VM type for your cluster meets the following criteria
-
-To use Azure Container Storage, you'll need a node pool of at least three Linux
-VMs. Each VM should have a minimum of four virtual CPUs (vCPUs). Azure Container
-Storage will consume one core for I/O processing on every VM the extension is
-deployed to.
-
-Follow these guidelines when choosing a VM type for the cluster nodes. You must
-choose a VM type that supports
-[Azure premium storage](/azure/virtual-machines/premium-storage-performance).
-
-- If you intend to use Azure Elastic SAN or Azure Disks as backing storage,
-  choose a [general purpose VM type](/azure/virtual-machines/sizes-general) such
-  as **standard_d4s_v5**.
-- If you intend to use Ephemeral Disk with local NVMe, choose a
-  [storage optimized VM type](/azure/virtual-machines/sizes-storage) such as
-  **standard_l8s_v3**.
-- If you intend to use Ephemeral Disk with temp SSD, choose a VM that has a temp
-  SSD disk such as
-  [Ev3 and Esv3-series](/azure/virtual-machines/ev3-esv3-series). -->
 
 ## Create a new AKS cluster and install Azure Container Storage
 
@@ -264,19 +189,20 @@ five nodes.
    `code acstor-storagepool.yaml`.
 
 3. Paste in the following code and save the file. The storage pool **name**
-   value can be whatever you want. Set replicas to 3 or 5.
+   value can be whatever you want, but for today let's call it
+   `ephemeraldisk-nvme`.
 
    ```yml
    apiVersion: containerstorage.azure.com/v1
    kind: StoragePool
    metadata:
-   name: ephemeraldisk-nvme
-   namespace: acstor
+     name: ephemeraldisk-nvme
+     namespace: acstor
    spec:
-   poolType:
-   ephemeralDisk:
-     diskType: nvme
-     replicas: 3
+     poolType:
+       ephemeralDisk:
+         diskType: nvme
+         replicas: 3
    ```
 
 4. Apply the YAML manifest file to create the storage pool.
@@ -319,7 +245,7 @@ acstor-ephemeraldisk-nvme        containerstorage.csi.azure.com   Delete        
 > Don't use the storage class that's marked **internal**. It's an internal
 > storage class that's needed for Azure Container Storage to work.
 
-### 4. Create a persistent volume claim
+<!-- ### 4. Create a persistent volume claim
 
 A persistent volume claim (PVC) is used to automatically provision storage based
 on a storage class. Follow these steps to create PVCs using the new storage
@@ -394,23 +320,30 @@ class.
    kubectl describe pvc
    ```
 
-Once the PVC is created, it's ready for use by a pod.
+Once the PVC is created, it's ready for use by a pod. -->
 
 ### 5. Deploy a pod and attach a persistent volume
 
 We will now deploy our store application with our MongoDB and RabbitMQ data held
 in our newly created persistent volumes.
 
-1. Use your favorite text editor to create a YAML manifest file such as
-   `code aks-store.yaml`.
-
-2. To preserve the readability of this markdown file, browse to the
-   `aks-store.yaml` file in this repository to view the manifest file.
-
-3. Apply the YAML manifest file to deploy the pod.
+1. We're going to create a namespace that will contain our pods for our sample
+   app.
 
    ```bash
-   kubectl apply -f aks-store.yaml
+   kubectl create ns pets
+   ```
+
+2. Use your favorite text editor to create a YAML manifest file such as
+   `code aks-store.yaml`.
+
+3. To preserve the readability of this markdown file, browse to the
+   `aks-store.yaml` file in this repository to view the manifest file.
+
+4. Apply the YAML manifest file to deploy the pod.
+
+   ```bash
+   kubectl apply -f aks-store.yaml -n pets
    ```
 
    You should see output similar to the following:
@@ -432,12 +365,12 @@ in our newly created persistent volumes.
    service/store-admin created
    ```
 
-4. To find the public IP address of your storefront and admin panel, wait a few
+5. To find the public IP address of your storefront and admin panel, wait a few
    minutes for the external IPs to be shown. Your IP addresses will differ from
    the ones shown below.
 
    ```bash
-   kubectl get service -n pets
+   kubectl get service -n pets --watch
    ```
 
    ```
@@ -456,7 +389,9 @@ Congratulations! 🙌🥳🎉
 You've now deployed an application using Azure Kubernetes Service and Azure
 Container Storage, backed by local NVMe drives with volume replication enabled!
 
-## Manage volumes and storage pools
+> Remember to delete your resource groups once you have finished this activity!
+
+## Appendix: managing volumes and storage pools
 
 In this section, you'll learn how to check the available capacity of ephemeral
 disk, how to detach and reattach a persistent volume, how to expand or delete a
@@ -482,7 +417,7 @@ ephemeraldisk-nvme-diskpool-ryiht   1920383410176   1884552454144   35830956032 
 In this example, the available capacity of ephemeral disk for a single node is
 `1884552462336` bytes or 1.71 TiB.
 
-### Detach and reattach a persistent volume
+<!-- ### Detach and reattach a persistent volume
 
 To detach a persistent volume, delete the pod that the persistent volume is
 attached to.
@@ -499,7 +434,7 @@ To check which persistent volume a persistent volume claim is bound to, run:
 
 ```bash
 kubectl get pvc <persistent-volume-claim-name>
-```
+``` -->
 
 ### Expand a storage pool
 

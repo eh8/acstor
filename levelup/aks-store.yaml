@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mongodb
+  namespace: pets
 spec:
   serviceName: mongodb
   replicas: 3
@@ -17,9 +18,6 @@ spec:
         "kubernetes.io/os": linux
       containers:
         - name: mongodb
-          volumeMounts:
-            - name: mongodb-ephemeralpv
-              mountPath: /data/db
           image: mcr.microsoft.com/mirror/docker/library/mongo:4.2
           ports:
             - containerPort: 27017
@@ -39,15 +37,32 @@ spec:
                 - db.runCommand('ping').ok
             initialDelaySeconds: 5
             periodSeconds: 5
+          volumeMounts:
+            - name: mongodb-ephemeralpv
+              mountPath: /data/db
+      # volumes:
+      #   - name: mongodb-ephemeralpv
+      #     persistentVolumeClaim:
+      #       claimName: ephemeralpvc-mongodb
       volumes:
         - name: mongodb-ephemeralpv
-          persistentVolumeClaim:
-            claimName: ephemeralpvc-mongodb
+          ephemeral:
+            volumeClaimTemplate:
+              metadata:
+                labels:
+                  type: mongodb-ephemeral-volume
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: acstor-ephemeraldisk-nvme
+                resources:
+                  requests:
+                    storage: 5Gi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mongodb
+  namespace: pets
 spec:
   ports:
     - port: 27017
@@ -62,11 +77,13 @@ data:
 kind: ConfigMap
 metadata:
   name: rabbitmq-enabled-plugins
+  namespace: pets
 ---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: rabbitmq
+  namespace: pets
 spec:
   serviceName: rabbitmq
   replicas: 3
@@ -113,14 +130,27 @@ spec:
             items:
               - key: rabbitmq_enabled_plugins
                 path: enabled_plugins
+        # - name: rabbitmq-ephemeralpv
+        #   persistentVolumeClaim:
+        #     claimName: ephemeralpvc-rabbitmq
         - name: rabbitmq-ephemeralpv
-          persistentVolumeClaim:
-            claimName: ephemeralpvc-rabbitmq
+          ephemeral:
+            volumeClaimTemplate:
+              metadata:
+                labels:
+                  type: rabbitmq-ephemeral-volume
+              spec:
+                accessModes: ["ReadWriteOnce"]
+                storageClassName: acstor-ephemeraldisk-nvme
+                resources:
+                  requests:
+                    storage: 5Gi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: rabbitmq
+  namespace: pets
 spec:
   selector:
     app: rabbitmq
@@ -137,6 +167,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: order-service
+  namespace: pets
 spec:
   replicas: 3
   selector:
@@ -217,6 +248,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: order-service
+  namespace: pets
 spec:
   type: ClusterIP
   ports:
@@ -230,6 +262,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: makeline-service
+  namespace: pets
 spec:
   replicas: 3
   selector:
@@ -294,6 +327,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: makeline-service
+  namespace: pets
 spec:
   type: ClusterIP
   ports:
@@ -307,6 +341,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: product-service
+  namespace: pets
 spec:
   replicas: 3
   selector:
@@ -353,6 +388,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: product-service
+  namespace: pets
 spec:
   type: ClusterIP
   ports:
@@ -366,6 +402,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: store-front
+  namespace: pets
 spec:
   replicas: 3
   selector:
@@ -422,6 +459,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: store-front
+  namespace: pets
 spec:
   ports:
     - port: 80
@@ -434,6 +472,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: store-admin
+  namespace: pets
 spec:
   replicas: 3
   selector:
@@ -490,6 +529,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: store-admin
+  namespace: pets
 spec:
   ports:
     - port: 80
@@ -497,68 +537,69 @@ spec:
   selector:
     app: store-admin
   type: LoadBalancer
-# Commenting out virtual-customer and virtual-worker because they might be confusing for audience
-# ---
-# apiVersion: apps/v1
-# kind: Deployment
-# metadata:
-#   name: virtual-customer
-# spec:
-#   replicas: 3
-#   selector:
-#     matchLabels:
-#       app: virtual-customer
-#   template:
-#     metadata:
-#       labels:
-#         app: virtual-customer
-#     spec:
-#       nodeSelector:
-#         "kubernetes.io/os": linux
-#       containers:
-#         - name: virtual-customer
-#           image: ghcr.io/azure-samples/aks-store-demo/virtual-customer:latest
-#           env:
-#             - name: ORDER_SERVICE_URL
-#               value: http://order-service:3000/
-#             - name: ORDERS_PER_HOUR
-#               value: "100"
-#           resources:
-#             requests:
-#               cpu: 1m
-#               memory: 1Mi
-#             limits:
-#               cpu: 1m
-#               memory: 7Mi
-# ---
-# apiVersion: apps/v1
-# kind: Deployment
-# metadata:
-#   name: virtual-worker
-# spec:
-#   replicas: 3
-#   selector:
-#     matchLabels:
-#       app: virtual-worker
-#   template:
-#     metadata:
-#       labels:
-#         app: virtual-worker
-#     spec:
-#       nodeSelector:
-#         "kubernetes.io/os": linux
-#       containers:
-#         - name: virtual-worker
-#           image: ghcr.io/azure-samples/aks-store-demo/virtual-worker:latest
-#           env:
-#             - name: MAKELINE_SERVICE_URL
-#               value: http://makeline-service:3001
-#             - name: ORDERS_PER_HOUR
-#               value: "100"
-#           resources:
-#             requests:
-#               cpu: 1m
-#               memory: 1Mi
-#             limits:
-#               cpu: 1m
-#               memory: 7Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: virtual-customer
+  namespace: pets
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: virtual-customer
+  template:
+    metadata:
+      labels:
+        app: virtual-customer
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      containers:
+        - name: virtual-customer
+          image: ghcr.io/azure-samples/aks-store-demo/virtual-customer:latest
+          env:
+            - name: ORDER_SERVICE_URL
+              value: http://order-service:3000/
+            - name: ORDERS_PER_HOUR
+              value: "100"
+          resources:
+            requests:
+              cpu: 1m
+              memory: 1Mi
+            limits:
+              cpu: 1m
+              memory: 7Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: virtual-worker
+  namespace: pets
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: virtual-worker
+  template:
+    metadata:
+      labels:
+        app: virtual-worker
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      containers:
+        - name: virtual-worker
+          image: ghcr.io/azure-samples/aks-store-demo/virtual-worker:latest
+          env:
+            - name: MAKELINE_SERVICE_URL
+              value: http://makeline-service:3001
+            - name: ORDERS_PER_HOUR
+              value: "100"
+          resources:
+            requests:
+              cpu: 1m
+              memory: 1Mi
+            limits:
+              cpu: 1m
+              memory: 7Mi
