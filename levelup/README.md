@@ -6,7 +6,7 @@ Welcome to this LevelUp demo! Today, you will:
 - Install an Azure CLI extension
 - Create an AKS cluster with Azure Container Storage installed
 - Connect to the new cluster
-- Create a replica-enabled storage pool and persistent volumes
+- Create a replica-enabled ephemeral disk storage pool
 - Deploy and test a demo store application
 - Simulate hardware failure to test storage resiliency
 
@@ -241,84 +241,7 @@ acstor-ephemeraldisk-nvme        containerstorage.csi.azure.com   Delete        
 > Don't use the storage class that's marked **internal**. It's an internal
 > storage class that's needed for Azure Container Storage to work.
 
-<!-- ### 4. Create a persistent volume claim
-
-A persistent volume claim (PVC) is used to automatically provision storage based
-on a storage class. Follow these steps to create PVCs using the new storage
-class.
-
-1. We're going to create a namespace that will contain our PVCs and the pods for
-   our sample app.
-
-   ```bash
-   kubectl create ns pets
-   ```
-
-2. Use your favorite text editor to create a YAML manifest file such as
-   `code acstor-pvc.yaml`.
-
-3. Paste in the following code and save the file. The PVC `name` value can be
-   whatever you want, but for simplicity let's call them `ephemeralpvc-mongodb`
-   and `ephemeralpvc-rabbitmq`
-
-   ```yml
-   apiVersion: v1
-   kind: PersistentVolumeClaim
-   metadata:
-   name: ephemeralpvc-mongodb
-   namespace: pets
-   annotations:
-     acstor.azure.com/accept-ephemeral-storage: "true"
-   spec:
-   accessModes:
-     - ReadWriteOnce
-   storageClassName: acstor-ephemeraldisk-nvme # replace with the name of your storage class if different
-   resources:
-     requests:
-     storage: 10Gi
-   ---
-   apiVersion: v1
-   kind: PersistentVolumeClaim
-   metadata:
-   name: ephemeralpvc-rabbitmq
-   namespace: pets
-   annotations:
-     acstor.azure.com/accept-ephemeral-storage: "true"
-   spec:
-   accessModes:
-     - ReadWriteOnce
-   storageClassName: acstor-ephemeraldisk-nvme # replace with the name of your storage class if different
-   resources:
-     requests:
-     storage: 10Gi
-   ```
-
-   When you change the storage size of your volumes, make sure the size is less
-   than the available capacity of a single node's ephemeral disk. See
-   [Check node ephemeral disk capacity](https://learn.microsoft.com/en-us/azure/storage/container-storage/use-container-storage-with-local-nvme-replication#check-node-ephemeral-disk-capacity).
-
-4. Apply the YAML manifest file to create the PVC.
-
-   ```bash
-   kubectl apply -f acstor-pvc.yaml
-   ```
-
-   You should see output similar to:
-
-   ```output
-   persistentvolumeclaim/ephemeralpvc-mongodb created
-   persistentvolumeclaim/ephemeralpvc-rabbitmq created
-   ```
-
-   You can verify the status of the PVC by running the following command:
-
-   ```bash
-   kubectl describe pvc
-   ```
-
-Once the PVC is created, it's ready for use by a pod. -->
-
-### 3. Deploy a pod and attach a persistent volume
+### 3. Create a namspace and deploy the application
 
 We will now deploy our store application with our MongoDB and RabbitMQ data held
 in our newly created persistent volumes.
@@ -415,25 +338,6 @@ ephemeraldisk-nvme-diskpool-ryiht   1920383410176   1884552454144   35830956032 
 
 In this example, the available capacity of ephemeral disk for a single node is
 `1884552462336` bytes or 1.71 TiB.
-
-<!-- ### Detach and reattach a persistent volume
-
-To detach a persistent volume, delete the pod that the persistent volume is
-attached to.
-
-```bash
-kubectl delete pods <pod-name>
-```
-
-To reattach a persistent volume, simply reference the persistent volume claim
-name in the YAML manifest file as described in
-[Deploy a pod and attach a persistent volume](https://learn.microsoft.com/en-us/azure/storage/container-storage/use-container-storage-with-local-nvme-replication#5-deploy-a-pod-and-attach-a-persistent-volume).
-
-To check which persistent volume a persistent volume claim is bound to, run:
-
-```bash
-kubectl get pvc <persistent-volume-claim-name>
-``` -->
 
 ### Expand a storage pool
 
