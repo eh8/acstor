@@ -241,7 +241,7 @@ acstor-ephemeraldisk-nvme        containerstorage.csi.azure.com   Delete        
 > Don't use the storage class that's marked **internal**. It's an internal
 > storage class that's needed for Azure Container Storage to work.
 
-### 3. Create a namspace and deploy the application
+### 3. Create a namespace and deploy the application
 
 We will now deploy our store application with our MongoDB and RabbitMQ data held
 in our newly created persistent volumes.
