@@ -390,7 +390,8 @@ az aks create \
     --node-count 3 \
     --enable-azure-container-storage "$STORAGE_OPTION" \
     ${STORAGE_POOL_OPTION:+--storage-pool-option "$STORAGE_POOL_OPTION"} \
-    --generate-ssh-keys
+    --generate-ssh-keys \
+    --ephemeral-disk-volume-type PersistentVolumeWithAnnotation
 
 # Get AKS credentials
 print_message "34" "Fetching AKS credentials..."
