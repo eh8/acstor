@@ -2,6 +2,15 @@
 
 set -e
 
+# Parse command line arguments
+BANDWIDTH_MODE=false
+if [[ "$1" == "--bandwidth" ]]; then
+    BANDWIDTH_MODE=true
+    echo "Running in bandwidth test mode (128k block size)"
+else
+    echo "Running in IOPS test mode (4k block size)"
+fi
+
 # Function to check if kubectl is connected to an AKS cluster with Azure Container Storage v2.0.0
 check_existing_cluster() {
     echo "Checking for existing AKS cluster with Azure Container Storage v2.0.0..."
@@ -105,7 +114,11 @@ EOF
     kubectl describe pod fiopod
     
     echo "Running fio benchmark test"
-    kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --bs=4k --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15
+    if [[ "$BANDWIDTH_MODE" == "true" ]]; then
+        kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --bs=128k --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15
+    else
+        kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --bs=4k --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15
+    fi
     
     echo "Fio test completed successfully!"
     echo ""
@@ -231,7 +244,11 @@ echo "Checking pod status"
 kubectl describe pod fiopod
 
 echo "Running fio benchmark test"
-kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --bs=4k --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15
+if [[ "$BANDWIDTH_MODE" == "true" ]]; then
+    kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --bs=128k --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15
+else
+    kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --bs=4k --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15
+fi
 
 echo "Setup complete!"
 echo "Resource Group: ${RESOURCE_GROUP}"
