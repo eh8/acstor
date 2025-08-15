@@ -44,8 +44,24 @@ kubectl cluster-info
 echo "Displaying available storage classes"
 kubectl get sc | grep "^acstor-"
 
-echo "Creating test pod with ephemeral volume"
+echo "Creating custom StorageClass for local-csi-driver"
 TEMP_DIR=$(mktemp -d)
+STORAGECLASS_YAML="${TEMP_DIR}/storageclass.yaml"
+
+cat > "${STORAGECLASS_YAML}" << 'EOF'
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local
+provisioner: localdisk.csi.acstor.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+EOF
+
+kubectl apply -f "${STORAGECLASS_YAML}"
+
+echo "Creating test pod with ephemeral volume using local StorageClass"
 TEMP_YAML="${TEMP_DIR}/acstor-pod.yaml"
 
 cat > "${TEMP_YAML}" << 'EOF'
@@ -55,7 +71,7 @@ metadata:
   name: fiopod
 spec:
   nodeSelector:
-    acstor.azure.com/io-engine: acstor
+    "kubernetes.io/os": linux
   containers:
     - name: fio
       image: nixery.dev/shell/fio
@@ -69,15 +85,14 @@ spec:
     - name: ephemeralvolume
       ephemeral:
         volumeClaimTemplate:
-          metadata:
-            labels:
-              type: my-ephemeral-volume
           spec:
-            accessModes: [ "ReadWriteOnce" ]
-            storageClassName: acstor-ephemeraldisk-nvme
             resources:
               requests:
-                storage: 1Gi
+                storage: 10Gi
+            volumeMode: Filesystem
+            accessModes:
+              - ReadWriteOnce
+            storageClassName: local
 EOF
 
 kubectl apply -f "${TEMP_YAML}"
