@@ -2,6 +2,130 @@
 
 set -e
 
+# Function to check if kubectl is connected to an AKS cluster with Azure Container Storage v2.0.0
+check_existing_cluster() {
+    echo "Checking for existing AKS cluster with Azure Container Storage v2.0.0..."
+    
+    # Check if kubectl is configured and can connect to a cluster
+    if ! kubectl cluster-info &>/dev/null; then
+        echo "No active kubectl context found."
+        return 1
+    fi
+    
+    # Check if Azure Container Storage extension is installed by looking for local storage class with acstor provisioner
+    if ! kubectl get sc local -o jsonpath='{.provisioner}' 2>/dev/null | grep -q "localdisk.csi.acstor.io"; then
+        echo "No Azure Container Storage v2.0.0 local storage class found in current cluster."
+        return 1
+    fi
+    
+    # Check if this is an AKS cluster by looking for AKS-specific resources
+    if ! kubectl get nodes -o jsonpath='{.items[0].spec.providerID}' | grep -q "azure"; then
+        echo "Current cluster is not an AKS cluster."
+        return 1
+    fi
+    
+    echo "Found existing AKS cluster with Azure Container Storage v2.0.0 extension!"
+    return 0
+}
+
+# Function to reset and re-run fio test
+reset_and_run_fio_test() {
+    echo "Resetting existing environment and re-running fio test..."
+    
+    # Delete existing fio pod if it exists
+    if kubectl get pod fiopod &>/dev/null; then
+        echo "Deleting existing fio pod..."
+        kubectl delete pod fiopod --ignore-not-found=true
+        echo "Waiting for pod to be fully deleted..."
+        kubectl wait --for=delete pod/fiopod --timeout=120s || true
+    fi
+    
+    # Recreate the local storage class (idempotent)
+    echo "Ensuring local StorageClass exists..."
+    TEMP_DIR=$(mktemp -d)
+    STORAGECLASS_YAML="${TEMP_DIR}/storageclass.yaml"
+    
+    cat > "${STORAGECLASS_YAML}" << 'EOF'
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local
+provisioner: localdisk.csi.acstor.io
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+EOF
+    
+    kubectl apply -f "${STORAGECLASS_YAML}"
+    
+    # Create new fio pod
+    echo "Creating new fio test pod..."
+    TEMP_YAML="${TEMP_DIR}/acstor-pod.yaml"
+    
+    cat > "${TEMP_YAML}" << 'EOF'
+kind: Pod
+apiVersion: v1
+metadata:
+  name: fiopod
+spec:
+  nodeSelector:
+    "kubernetes.io/os": linux
+  containers:
+    - name: fio
+      image: nixery.dev/shell/fio
+      args:
+        - sleep
+        - "1000000"
+      volumeMounts:
+        - mountPath: "/volume"
+          name: ephemeralvolume
+  volumes:
+    - name: ephemeralvolume
+      ephemeral:
+        volumeClaimTemplate:
+          spec:
+            resources:
+              requests:
+                storage: 10Gi
+            volumeMode: Filesystem
+            accessModes:
+              - ReadWriteOnce
+            storageClassName: local
+EOF
+    
+    kubectl apply -f "${TEMP_YAML}"
+    
+    # Clean up temporary files
+    rm -rf "${TEMP_DIR}"
+    
+    echo "Waiting for pod to be ready..."
+    kubectl wait --for=condition=Ready pod/fiopod --timeout=300s
+    
+    echo "Checking pod status"
+    kubectl describe pod fiopod
+    
+    echo "Running fio benchmark test"
+    kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=libaio --bs=4k --iodepth=16 --numjobs=8 --time_based --runtime=60
+    
+    echo "Fio test completed successfully!"
+    echo ""
+    echo "To interact with your cluster:"
+    echo "  kubectl get pods"
+    echo "  kubectl get pvc"
+    echo "  kubectl get sc"
+    
+    return 0
+}
+
+# Check if we have an existing cluster with Azure Container Storage v2.0.0
+if check_existing_cluster; then
+    reset_and_run_fio_test
+    exit 0
+fi
+
+# If no existing cluster, proceed with full setup
+echo "No existing AKS cluster with Azure Container Storage v2.0.0 found. Creating new cluster..."
+
 RANDOM_UUID=$(openssl rand -hex 4)
 RESOURCE_GROUP="rg-ericcheng-${RANDOM_UUID}"
 CLUSTER_NAME="aks-cluster-${RANDOM_UUID}"
