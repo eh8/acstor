@@ -47,30 +47,6 @@ az aks update -n "${CLUSTER_NAME}" -g "${RESOURCE_GROUP}" \
 echo "Verifying kubectl connection to cluster"
 kubectl cluster-info
 
-echo "Checking existing storage pools"
-kubectl get sp -n acstor
-
-echo "Creating ephemeral disk storage pool"
-cat > acstor-storagepool.yaml << 'EOF'
-apiVersion: containerstorage.azure.com/v1
-kind: StoragePool
-metadata:
-  name: ephemeraldisk-nvme
-  namespace: acstor
-spec:
-  poolType:
-    ephemeralDisk:
-      diskType: nvme
-EOF
-
-kubectl apply -f acstor-storagepool.yaml
-
-echo "Waiting for storage pool to be ready..."
-kubectl wait --for=condition=Ready sp/ephemeraldisk-nvme -n acstor --timeout=300s
-
-echo "Checking storage pool status"
-kubectl describe sp ephemeraldisk-nvme -n acstor
-
 echo "Displaying available storage classes"
 kubectl get sc | grep "^acstor-"
 
@@ -101,7 +77,7 @@ spec:
               type: my-ephemeral-volume
           spec:
             accessModes: [ "ReadWriteOnce" ]
-            storageClassName: acstor-ephemeraldisk-nvme
+            storageClassName: acstor-ephemeral-disk
             resources:
               requests:
                 storage: 1Gi
