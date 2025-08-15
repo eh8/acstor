@@ -8,7 +8,10 @@ This repository contains automation scripts and example configurations for deplo
 
 - **`automate.sh`** - Automated AKS cluster creation with Azure Container Storage (simplified version)
 - **`interact.sh`** - Interactive setup script with user prompts for subscription, backing storage options, VM SKUs, and regions  
-- **`nuke.sh`** - Cleanup script to delete all test resource groups
+- **`nuke.sh`** - Destructive operations utility with two modes:
+  - `contexts` - Clean up stale/unreachable kubectl contexts
+  - `resources` - Delete all Azure resource groups matching pattern (ericcheng-*)
+  - Supports `--dry-run` mode for safe preview of operations
 
 ### Example Configurations (`levelup/`)
 
@@ -47,6 +50,33 @@ By default, the script will detect and reuse an existing AKS cluster with Azure 
 ```bash
 bash -c "$(curl -fsSL aka.ms/acstor-quickstart)"
 ```
+
+## Cleanup Operations
+
+### nuke.sh - Destructive Operations Utility
+
+The `nuke.sh` script provides safe cleanup operations with dry-run preview capability:
+
+```bash
+# Preview context cleanup (RECOMMENDED - always run dry-run first)
+./nuke.sh contexts --dry-run
+
+# Actually clean up stale kubectl contexts
+./nuke.sh contexts
+
+# Preview Azure resource group deletion
+./nuke.sh resources --dry-run 
+
+# Delete Azure resource groups matching pattern
+./nuke.sh resources
+```
+
+**Safety Features:**
+
+- `--dry-run` mode for safe preview without making changes
+- Detailed analysis of what will be affected
+- Explicit confirmation required for destructive operations
+- Resource counting and impact assessment
 
 ## Features
 
