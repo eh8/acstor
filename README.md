@@ -20,18 +20,30 @@ This repository contains automation scripts and example configurations for deplo
 ## Quick Start
 
 ### Option 1: Interactive Setup (Recommended)
+
 ```bash
 ./interact.sh
 ```
+
 This script provides a user-friendly interface to select your Azure subscription, backing storage type (Azure Disk, Elastic SAN, or Ephemeral Disk), VM SKU, region, and resource group.
 
 ### Option 2: Automated Setup
+
 ```bash
-./automate.sh
+./automate.sh [--bandwidth] [--force-new-cluster]
 ```
+
 Creates an AKS cluster with predefined settings using ephemeral disk storage.
 
+**Parameters:**
+
+- `--bandwidth` - Run fio test in bandwidth mode (128k block size) instead of IOPS mode (4k block size)
+- `--force-new-cluster` - Force creation of a new cluster, ignoring any existing AKS cluster with Azure Container Storage
+
+By default, the script will detect and reuse an existing AKS cluster with Azure Container Storage if available. Use `--force-new-cluster` to always create a fresh cluster.
+
 ### Option 3: Official Quickstart
+
 ```bash
 bash -c "$(curl -fsSL aka.ms/acstor-quickstart)"
 ```
@@ -56,6 +68,7 @@ bash -c "$(curl -fsSL aka.ms/acstor-quickstart)"
 ## Documentation
 
 See `levelup/README.md` for a comprehensive tutorial including:
+
 - Step-by-step cluster setup
 - Storage pool configuration  
 - Application deployment

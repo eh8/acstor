@@ -4,10 +4,27 @@ set -e
 
 # Parse command line arguments
 BANDWIDTH_MODE=false
-if [[ "$1" == "--bandwidth" ]]; then
-    BANDWIDTH_MODE=true
-    echo "Running in bandwidth test mode (128k block size)"
-else
+FORCE_NEW_CLUSTER=false
+
+for arg in "$@"; do
+    case $arg in
+        --bandwidth)
+            BANDWIDTH_MODE=true
+            echo "Running in bandwidth test mode (128k block size)"
+            ;;
+        --force-new-cluster)
+            FORCE_NEW_CLUSTER=true
+            echo "Force creating new cluster (ignoring existing cluster)"
+            ;;
+        *)
+            echo "Unknown argument: $arg"
+            echo "Usage: $0 [--bandwidth] [--force-new-cluster]"
+            exit 1
+            ;;
+    esac
+done
+
+if [[ "$BANDWIDTH_MODE" == "false" ]]; then
     echo "Running in IOPS test mode (4k block size)"
 fi
 
@@ -130,14 +147,18 @@ EOF
     return 0
 }
 
-# Check if we have an existing cluster with Azure Container Storage v2.0.0
-if check_existing_cluster; then
+# Check if we should use existing cluster or force new one
+if [[ "$FORCE_NEW_CLUSTER" == "false" ]] && check_existing_cluster; then
     reset_and_run_fio_test
     exit 0
 fi
 
-# If no existing cluster, proceed with full setup
-echo "No existing AKS cluster with Azure Container Storage v2.0.0 found. Creating new cluster..."
+# If no existing cluster or forced to create new one, proceed with full setup
+if [[ "$FORCE_NEW_CLUSTER" == "true" ]]; then
+    echo "Forcing creation of new AKS cluster..."
+else
+    echo "No existing AKS cluster with Azure Container Storage v2.0.0 found. Creating new cluster..."
+fi
 
 RANDOM_UUID=$(openssl rand -hex 4)
 RESOURCE_GROUP="rg-ericcheng-${RANDOM_UUID}"
