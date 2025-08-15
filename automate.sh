@@ -51,7 +51,10 @@ echo "Displaying available storage classes"
 kubectl get sc | grep "^acstor-"
 
 echo "Creating test pod with ephemeral volume"
-cat > acstor-pod.yaml << 'EOF'
+TEMP_DIR=$(mktemp -d)
+TEMP_YAML="${TEMP_DIR}/acstor-pod.yaml"
+
+cat > "${TEMP_YAML}" << 'EOF'
 kind: Pod
 apiVersion: v1
 metadata:
@@ -83,7 +86,10 @@ spec:
                 storage: 1Gi
 EOF
 
-kubectl apply -f acstor-pod.yaml
+kubectl apply -f "${TEMP_YAML}"
+
+# Clean up temporary file
+rm -rf "${TEMP_DIR}"
 
 echo "Waiting for pod to be ready..."
 kubectl wait --for=condition=Ready pod/fiopod --timeout=300s
