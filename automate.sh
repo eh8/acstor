@@ -77,7 +77,7 @@ spec:
               type: my-ephemeral-volume
           spec:
             accessModes: [ "ReadWriteOnce" ]
-            storageClassName: acstor-ephemeral-disk
+            storageClassName: acstor-ephemeraldisk-nvme
             resources:
               requests:
                 storage: 1Gi
