@@ -38,12 +38,6 @@ az k8s-extension create \
   --version 2.0.0-preview.2 \
   --verbose
 
-echo "Enabling Azure Container Storage with NVMe support"
-az aks update -n "${CLUSTER_NAME}" -g "${RESOURCE_GROUP}" \
-  --enable-azure-container-storage ephemeralDisk \
-  --storage-pool-option NVMe \
-  --ephemeral-disk-volume-type PersistentVolumeWithAnnotation
-
 echo "Verifying kubectl connection to cluster"
 kubectl cluster-info
 
