@@ -105,7 +105,7 @@ EOF
     kubectl describe pod fiopod
     
     echo "Running fio benchmark test"
-    kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=libaio --bs=4k --iodepth=16 --numjobs=8 --time_based --runtime=60
+    kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --bs=4k --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15
     
     echo "Fio test completed successfully!"
     echo ""
@@ -231,7 +231,7 @@ echo "Checking pod status"
 kubectl describe pod fiopod
 
 echo "Running fio benchmark test"
-kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=libaio --bs=4k --iodepth=16 --numjobs=8 --time_based --runtime=60
+kubectl exec -it fiopod -- fio --name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --bs=4k --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15
 
 echo "Setup complete!"
 echo "Resource Group: ${RESOURCE_GROUP}"
