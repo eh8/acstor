@@ -200,7 +200,7 @@ echo "Verifying kubectl connection to cluster"
 kubectl cluster-info
 
 echo "Displaying available storage classes"
-kubectl get sc | grep "^acstor-"
+kubectl get sc
 
 echo "Creating custom StorageClass for local-csi-driver"
 TEMP_DIR=$(mktemp -d)
