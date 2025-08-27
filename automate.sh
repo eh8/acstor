@@ -326,19 +326,21 @@ spec:
   
   postgresql:
     parameters:
-      shared_buffers: "2GB"
-      effective_cache_size: "4GB"
-      max_connections: "200"
-      checkpoint_completion_target: "0.9"
-      wal_buffers: "16MB"
+      shared_buffers: "128MB"
+      effective_cache_size: "256MB"
+      max_connections: "500"
+      checkpoint_completion_target: "0.5"
+      wal_buffers: "1MB"
       default_statistics_target: "100"
-      random_page_cost: "1.1"
+      random_page_cost: "4.0"
+      seq_page_cost: "1.0"
       effective_io_concurrency: "200"
-      work_mem: "16MB"
+      work_mem: "4MB"
       maintenance_work_mem: "256MB"
       min_wal_size: "1GB"
       max_wal_size: "4GB"
       checkpoint_timeout: "15min"
+      checkpoint_flush_after: "0"
       max_worker_processes: "8"
       max_parallel_workers_per_gather: "4"
       max_parallel_workers: "8"
@@ -349,6 +351,8 @@ spec:
       synchronous_commit: "on"
       full_page_writes: "on"
       wal_compression: "off"
+      commit_delay: "0"
+      fsync: "on"
       
   bootstrap:
     initdb:
@@ -476,6 +480,28 @@ run_cnpg_pgbench_test() {
         -j "$clients" \
         -T "$duration" \
         -P 10 \
+        -U postgres \
+        benchmarkdb
+    
+    echo ""
+    echo "=== Running Read-Only Test ==="
+    kubectl exec -it "$primary_pod" -- pgbench \
+        -c "$clients" \
+        -j "$clients" \
+        -T "$duration" \
+        -P 10 \
+        -S \
+        -U postgres \
+        benchmarkdb
+    
+    echo ""
+    echo "=== Running Write-Only Test ==="
+    kubectl exec -it "$primary_pod" -- pgbench \
+        -c "$clients" \
+        -j "$clients" \
+        -T "$duration" \
+        -P 10 \
+        -N \
         -U postgres \
         benchmarkdb
     
