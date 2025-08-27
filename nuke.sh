@@ -18,8 +18,9 @@ declare -A CLUSTER_LAST_CHECKED
 CACHE_TIMEOUT=300  # 5 minutes
 
 # Global variables for script behavior
-DRY_RUN=false
+DRY_RUN=true  # Default to dry-run for safety
 SCRIPT_MODE=""
+INSPECT_MODE=false
 
 # Function to print colored messages
 print_color() {
@@ -39,18 +40,20 @@ show_usage() {
     print_color "$YELLOW" "  resources    Delete all Azure resource groups matching pattern"
     echo ""
     print_color "$WHITE" "OPTIONS:"
-    print_color "$GREEN" "  --dry-run, -n    Preview operations without making changes (RECOMMENDED)"
+    print_color "$RED" "  --delete         Actually execute destructive operations (DANGEROUS!)"
+    print_color "$YELLOW" "  --inspect        Show detailed resource information (use with resources)"
     print_color "$YELLOW" "  --help, -h       Show this help message"
     echo ""
     print_color "$WHITE" "EXAMPLES:"
-    print_color "$GREEN" "  $0 contexts --dry-run    # Preview context cleanup (SAFE)"
-    print_color "$GREEN" "  $0 resources --dry-run   # Preview resource deletion (SAFE)"
-    echo "  $0 contexts              # Actually remove stale contexts"
-    echo "  $0 resources             # Actually delete resource groups"
+    print_color "$GREEN" "  $0 contexts              # Preview context cleanup (SAFE - default)"
+    print_color "$GREEN" "  $0 resources             # Preview resource deletion (SAFE - default)"
+    print_color "$GREEN" "  $0 resources --inspect   # Preview with detailed resource information"
+    print_color "$RED" "  $0 contexts --delete     # Actually remove stale contexts (DANGEROUS!)"
+    print_color "$RED" "  $0 resources --delete    # Actually delete resource groups (DANGEROUS!)"
     echo ""
-    print_color "$GREEN" "💡 TIP: Always run with --dry-run first to preview changes!"
+    print_color "$GREEN" "💡 TIP: By default, operations run in preview mode (dry-run)"
     echo ""
-    print_color "$RED" "⚠️  WARNING: Operations without --dry-run are DESTRUCTIVE and cannot be undone!"
+    print_color "$RED" "⚠️  WARNING: Operations with --delete are DESTRUCTIVE and cannot be undone!"
     echo ""
 }
 
@@ -63,9 +66,15 @@ is_dry_run() {
 show_dry_run_banner() {
     if is_dry_run; then
         print_color "$GREEN" "┌─────────────────────────────────────────────────────────┐"
-        print_color "$GREEN" "│                    🔍 DRY RUN MODE                      │"
-        print_color "$GREEN" "│              No changes will be made                   │"
+        print_color "$GREEN" "│                 🔍 PREVIEW MODE (DEFAULT)               │"
+        print_color "$GREEN" "│              No changes will be made                    │"
         print_color "$GREEN" "└─────────────────────────────────────────────────────────┘"
+        echo ""
+    else
+        print_color "$RED" "┌─────────────────────────────────────────────────────────┐"
+        print_color "$RED" "│              ⚠️  DESTRUCTIVE MODE ACTIVE ⚠️               │"
+        print_color "$RED" "│           Changes WILL be made and are PERMANENT        │"
+        print_color "$RED" "└─────────────────────────────────────────────────────────┘"
         echo ""
     fi
 }
@@ -74,9 +83,9 @@ show_dry_run_banner() {
 dry_run_message() {
     local message="$1"
     if is_dry_run; then
-        print_color "$GREEN" "🔍 DRY RUN: $message"
+        print_color "$GREEN" "🔍 PREVIEW: $message"
     else
-        print_color "$YELLOW" "$message"
+        print_color "$YELLOW" "⚠️  EXECUTING: $message"
     fi
 }
 
@@ -86,8 +95,12 @@ parse_arguments() {
     
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --dry-run|-n)
-                DRY_RUN=true
+            --delete)
+                DRY_RUN=false
+                shift
+                ;;
+            --inspect)
+                INSPECT_MODE=true
                 shift
                 ;;
             --help|-h)
@@ -134,8 +147,6 @@ parse_aks_context() {
         local cluster_name="${BASH_REMATCH[1]}"
         local resource_group="${BASH_REMATCH[2]}"
         echo "RG: $resource_group | Cluster: $cluster_name"
-    else
-        echo "Non-standard context name"
     fi
 }
 
@@ -185,7 +196,7 @@ nuke_stale_contexts() {
     if is_dry_run; then
         print_color "$CYAN" "🔍 Kubectl Context Cleanup Preview"
     else
-        print_color "$CYAN" "🧹 Kubectl Context Cleanup Mode"
+        print_color "$RED" "💥 Kubectl Context Cleanup - DESTRUCTIVE MODE"
     fi
     echo ""
     
@@ -263,42 +274,37 @@ nuke_stale_contexts() {
         else
             print_color "$RED" "  ❌ $context"
         fi
-        print_color "$BLUE" "     $(parse_aks_context "$context")"
+        local context_info=$(parse_aks_context "$context")
+        if [ -n "$context_info" ]; then
+            print_color "$BLUE" "     $context_info"
+        fi
     done
     
     echo ""
     
     if is_dry_run; then
-        print_color "$GREEN" "🔍 DRY RUN SUMMARY:"
+        print_color "$GREEN" "🔍 PREVIEW SUMMARY:"
         print_color "$GREEN" "  • Would delete ${#stale_contexts[@]} stale context(s)"
         print_color "$GREEN" "  • Would keep ${#active_contexts[@]} active context(s)"
-        print_color "$BLUE" "  • Run without --dry-run to execute these changes"
+        print_color "$BLUE" "  • Run with --delete to execute these changes"
         exit 0
     else
-        print_color "$YELLOW" "Type 'DELETE' to proceed, or anything else to cancel:"
-        read -r confirmation
-        
-        if [ "$confirmation" = "DELETE" ]; then
-            echo ""
-            print_color "$YELLOW" "Deleting stale contexts..."
-            local success_count=0
-            for context in "${stale_contexts[@]}"; do
-                if kubectl config delete-context "$context" &>/dev/null; then
-                    print_color "$GREEN" "✅ Deleted: $context"
-                    success_count=$((success_count + 1))
-                    # Clear from cache
-                    unset CLUSTER_STATUS_CACHE["$context"]
-                    unset CLUSTER_LAST_CHECKED["$context"]
-                else
-                    print_color "$RED" "❌ Failed to delete: $context"
-                fi
-            done
-            echo ""
-            print_color "$GREEN" "Successfully deleted $success_count context(s)."
-        else
-            print_color "$YELLOW" "Cleanup cancelled."
-            exit 0
-        fi
+        echo ""
+        print_color "$YELLOW" "Deleting stale contexts..."
+        local success_count=0
+        for context in "${stale_contexts[@]}"; do
+            if kubectl config delete-context "$context" &>/dev/null; then
+                print_color "$GREEN" "✅ Deleted: $context"
+                success_count=$((success_count + 1))
+                # Clear from cache
+                unset CLUSTER_STATUS_CACHE["$context"]
+                unset CLUSTER_LAST_CHECKED["$context"]
+            else
+                print_color "$RED" "❌ Failed to delete: $context"
+            fi
+        done
+        echo ""
+        print_color "$GREEN" "Successfully deleted $success_count context(s)."
     fi
 }
 
@@ -309,7 +315,7 @@ nuke_azure_resources() {
     if is_dry_run; then
         print_color "$CYAN" "🔍 Azure Resource Group Deletion Preview"
     else
-        print_color "$CYAN" "💥 Azure Resource Group Deletion Mode"
+        print_color "$RED" "💥 Azure Resource Group Deletion - DESTRUCTIVE MODE"
     fi
     echo ""
     
@@ -356,72 +362,80 @@ nuke_azure_resources() {
     local detailed_info=()
     
     for rg in "${resource_groups[@]}"; do
-        # Show basic info about the resource group
-        local location=$(az group show --name "$rg" --query location -o tsv 2>/dev/null || echo "unknown")
-        local resource_count=$(az resource list --resource-group "$rg" --query "length(@)" -o tsv 2>/dev/null || echo "0")
-        
-        # Safely add to total (handle non-numeric values)
-        if [[ "$resource_count" =~ ^[0-9]+$ ]]; then
-            total_resources=$((total_resources + resource_count))
-        fi
-        
-        if is_dry_run; then
-            print_color "$YELLOW" "  🔍 $rg"
-            print_color "$BLUE" "     Location: $location | Resources: $resource_count"
+        if [ "$INSPECT_MODE" = true ]; then
+            # Show detailed info when --inspect is used
+            local location=$(az group show --name "$rg" --query location -o tsv 2>/dev/null || echo "unknown")
+            local resource_count=$(az resource list --resource-group "$rg" --query "length(@)" -o tsv 2>/dev/null || echo "0")
             
-            # Get more detailed resource information in dry-run mode
-            if [[ "$resource_count" =~ ^[0-9]+$ ]] && [ "$resource_count" -gt 0 ]; then
-                local resource_types=$(az resource list --resource-group "$rg" --query "[].type" -o tsv 2>/dev/null | sort | uniq -c | sort -nr)
-                if [ -n "$resource_types" ]; then
-                    print_color "$BLUE" "     Resource types:"
-                    while IFS= read -r type_info; do
-                        print_color "$BLUE" "       • $type_info"
-                    done <<< "$resource_types"
-                fi
+            # Safely add to total (handle non-numeric values)
+            if [[ "$resource_count" =~ ^[0-9]+$ ]]; then
+                total_resources=$((total_resources + resource_count))
             fi
+            
+            if is_dry_run; then
+                print_color "$YELLOW" "  🔍 $rg"
+                print_color "$BLUE" "     Location: $location | Resources: $resource_count"
+                
+                # Get more detailed resource information in inspect mode
+                if [[ "$resource_count" =~ ^[0-9]+$ ]] && [ "$resource_count" -gt 0 ]; then
+                    local resource_types=$(az resource list --resource-group "$rg" --query "[].type" -o tsv 2>/dev/null | sort | uniq -c | sort -nr)
+                    if [ -n "$resource_types" ]; then
+                        print_color "$BLUE" "     Resource types:"
+                        while IFS= read -r type_info; do
+                            print_color "$BLUE" "       • $type_info"
+                        done <<< "$resource_types"
+                    fi
+                fi
+            else
+                print_color "$RED" "  💥 $rg"
+                print_color "$BLUE" "     Location: $location | Resources: $resource_count"
+            fi
+            echo ""
         else
-            print_color "$RED" "  💥 $rg"
-            print_color "$BLUE" "     Location: $location | Resources: $resource_count"
+            # Show only resource group name by default (faster)
+            if is_dry_run; then
+                print_color "$YELLOW" "  🔍 $rg"
+            else
+                print_color "$RED" "  💥 $rg"
+            fi
         fi
-        echo ""
     done
     
     if is_dry_run; then
-        print_color "$GREEN" "🔍 DRY RUN SUMMARY:"
+        print_color "$GREEN" "🔍 PREVIEW SUMMARY:"
         print_color "$GREEN" "  • Would delete ${#resource_groups[@]} resource group(s)"
-        print_color "$GREEN" "  • Total resources affected: $total_resources"
-        print_color "$YELLOW" "  • Estimated cost impact: Run 'az consumption usage list' for cost analysis"
-        print_color "$BLUE" "  • Run without --dry-run to execute these deletions"
+        if [ "$INSPECT_MODE" = true ]; then
+            print_color "$GREEN" "  • Total resources affected: $total_resources"
+            print_color "$YELLOW" "  • Estimated cost impact: Run 'az consumption usage list' for cost analysis"
+        fi
+        print_color "$RED" "  • Run with --delete to execute these deletions"
+        if [ "$INSPECT_MODE" = false ]; then
+            print_color "$BLUE" "  • Use --inspect to see detailed resource information"
+        fi
         echo ""
         print_color "$RED" "⚠️  Remember: Resource group deletion is PERMANENT and IRREVERSIBLE!"
         exit 0
     else
         print_color "$RED" "⚠️  This will DELETE ALL RESOURCES in these groups!"
-        print_color "$RED" "⚠️  Total resources to be deleted: $total_resources"
-        print_color "$YELLOW" "Type 'DELETE' to proceed, or anything else to cancel:"
-        read -r confirmation
-        
-        if [ "$confirmation" = "DELETE" ]; then
-            echo ""
-            print_color "$YELLOW" "Deleting resource groups (no-wait mode)..."
-            local success_count=0
-            
-            for rg in "${resource_groups[@]}"; do
-                if az group delete --name "$rg" --yes --no-wait &>/dev/null; then
-                    print_color "$GREEN" "✅ Deletion initiated: $rg"
-                    success_count=$((success_count + 1))
-                else
-                    print_color "$RED" "❌ Failed to delete: $rg"
-                fi
-            done
-            
-            echo ""
-            print_color "$GREEN" "Successfully initiated deletion of $success_count resource group(s)."
-            print_color "$BLUE" "Note: Deletions are running in the background and may take several minutes to complete."
-        else
-            print_color "$YELLOW" "Deletion cancelled."
-            exit 0
+        if [ "$INSPECT_MODE" = true ]; then
+            print_color "$RED" "⚠️  Total resources to be deleted: $total_resources"
         fi
+        echo ""
+        print_color "$YELLOW" "Deleting resource groups (no-wait mode)..."
+        local success_count=0
+        
+        for rg in "${resource_groups[@]}"; do
+            if az group delete --name "$rg" --yes --no-wait &>/dev/null; then
+                print_color "$GREEN" "✅ Deletion initiated: $rg"
+                success_count=$((success_count + 1))
+            else
+                print_color "$RED" "❌ Failed to delete: $rg"
+            fi
+        done
+        
+        echo ""
+        print_color "$GREEN" "Successfully initiated deletion of $success_count resource group(s)."
+        print_color "$BLUE" "Note: Deletions are running in the background and may take several minutes to complete."
     fi
 }
 
