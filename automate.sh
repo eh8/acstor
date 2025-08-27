@@ -17,7 +17,7 @@ OPTIONS:
     --iops                Run IOPS test mode (4k block size)
     --bandwidth           Run bandwidth test mode (128k block size)
     --pgsql               Run PostgreSQL benchmark on local NVMe + Azure Container Storage
-    --pgsql-azure-disk    Run PostgreSQL benchmark on Azure Disks Premium SSD only
+    --pgsql-azure-disk    Run PostgreSQL benchmark on Azure Premium SSD v2 (80k IOPS, 1200 MBps)
     --cleanup             Reset cluster by removing stale PVCs and pods (keeps ACStor and storage classes)
     --force-new-cluster   Force creation of new AKS cluster (ignores existing cluster)
     --help, -h           Show this help message
@@ -26,7 +26,7 @@ EXAMPLES:
     $0 --iops                    # Run IOPS test on existing or new cluster
     $0 --bandwidth               # Run bandwidth test on existing or new cluster
     $0 --pgsql                   # Run PostgreSQL benchmark on local NVMe storage
-    $0 --pgsql-azure-disk        # Run PostgreSQL benchmark on Azure Disks Premium SSD
+    $0 --pgsql-azure-disk        # Run PostgreSQL benchmark on Azure Premium SSD v2
     $0 --cleanup                 # Clean up stale resources
     $0 --iops --force-new-cluster # Force new cluster and run IOPS test
 
@@ -56,7 +56,7 @@ for arg in "$@"; do
             ;;
         --pgsql-azure-disk)
             RUN_MODE="pgsql-azure-disk"
-            echo "Running PostgreSQL benchmark on Azure Disks Premium SSD only"
+            echo "Running PostgreSQL benchmark on Azure Premium SSD v2 (80k IOPS, 1200 MBps)"
             ;;
         --cleanup)
             RUN_MODE="cleanup"
@@ -179,6 +179,25 @@ allowVolumeExpansion: true
 EOF
 }
 
+# Function to apply Premium SSD v2 storage class
+apply_premium_v2_storage_class() {
+    kubectl apply -f - <<'EOF'
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: premium2-disk-sc
+parameters:
+  cachingMode: None
+  skuName: PremiumV2_LRS
+  DiskIOPSReadWrite: "80000"
+  DiskMBpsReadWrite: "1200"
+provisioner: disk.csi.azure.com
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+EOF
+}
+
 # Note: managed-csi-premium storage class is provided by the preinstalled Azure Disk CSI driver
 
 # Function to create and run fio test pod
@@ -266,6 +285,20 @@ spec:
   resources:
     requests:
       storage: 100Gi
+EOF
+    elif [[ "$storage_class" == "premium2-disk-sc" ]]; then
+        kubectl apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${deployment_name}-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: $storage_class
+  resources:
+    requests:
+      storage: 1Ti
 EOF
     else
         kubectl apply -f - <<EOF
@@ -455,30 +488,31 @@ run_single_postgresql_benchmark() {
     echo "  kubectl get pvc                                              # View storage claims"
 }
 
-# Function to run Azure disk PostgreSQL benchmark
+# Function to run Azure Premium SSD v2 PostgreSQL benchmark
 run_comparative_postgresql_benchmark() {
     apply_storage_class
+    apply_premium_v2_storage_class
     
-    echo "=== Starting Azure Disk PostgreSQL Benchmark ==="
-    echo "This will test PostgreSQL performance on Azure Disks Premium SSD (managed-csi-premium)"
+    echo "=== Starting Azure Premium SSD v2 PostgreSQL Benchmark ==="
+    echo "This will test PostgreSQL performance on Azure Premium SSD v2 with maximal performance (80k IOPS, 1200 MBps)"
     echo ""
     
-    # Test: Premium managed disk only
-    echo "=== Azure Disks Premium SSD Test ==="
-    create_postgresql_deployment "managed-csi-premium"
-    initialize_pgbench_database "postgres-managedcsipremium"
-    run_pgbench_test "postgres-managedcsipremium" "Azure Disks Premium SSD"
+    # Test: Premium SSD v2 with high performance settings
+    echo "=== Azure Premium SSD v2 Test ==="
+    create_postgresql_deployment "premium2-disk-sc"
+    initialize_pgbench_database "postgres-premium2disksc"
+    run_pgbench_test "postgres-premium2disksc" "Azure Premium SSD v2 (80k IOPS, 1200 MBps)"
     
     echo ""
-    echo "=== Azure Disk PostgreSQL Benchmark Complete ==="
+    echo "=== Azure Premium SSD v2 PostgreSQL Benchmark Complete ==="
     echo ""
     echo "PostgreSQL instance is running. You can:"
-    echo "  kubectl top pod -l app=postgres-managedcsipremium                  # Monitor premium disk resource usage"
+    echo "  kubectl top pod -l app=postgres-premium2disksc                     # Monitor Premium SSD v2 resource usage"
     echo "  kubectl get pvc                                                     # View storage claims"
     echo "  kubectl describe pv                                                 # View persistent volume details"
     echo ""
     echo "To run additional tests:"
-    echo "  kubectl exec -it deployment/postgres-managedcsipremium -- pgbench -c 8 -j 8 -T 60 -P 3 --progress-timestamp -U postgres benchmarkdb"
+    echo "  kubectl exec -it deployment/postgres-premium2disksc -- pgbench -c 8 -j 8 -T 60 -P 3 --progress-timestamp -U postgres benchmarkdb"
 }
 
 # Function to create new AKS cluster
@@ -498,7 +532,8 @@ create_new_cluster() {
       --node-count 3 \
       --node-vm-size "Standard_L16s_v3" \
       --enable-managed-identity \
-      --generate-ssh-keys
+      --generate-ssh-keys \
+      --zones 1 2 3
     
     echo "Getting AKS credentials"
     az aks get-credentials --resource-group "${RESOURCE_GROUP}" --name "${CLUSTER_NAME}"
@@ -557,7 +592,7 @@ case $RUN_MODE in
         ;;
     pgsql-azure-disk)
         if [[ "$FORCE_NEW_CLUSTER" == "false" ]] && check_existing_cluster; then
-            echo "Using existing cluster, running Azure disk PostgreSQL benchmark..."
+            echo "Using existing cluster, running Azure Premium SSD v2 PostgreSQL benchmark..."
             run_comparative_postgresql_benchmark
         else
             echo "${FORCE_NEW_CLUSTER:+Forcing creation of new AKS cluster...}${FORCE_NEW_CLUSTER:-No existing AKS cluster with Azure Container Storage v2.0.0 found. Creating new cluster...}"
