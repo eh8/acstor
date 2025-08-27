@@ -94,9 +94,13 @@ cleanup_cluster() {
         exit 1
     fi
     
-    # Get user namespaces (excluding system namespaces)
+    # Delete all CNPG clusters
+    echo "Force deleting all CNPG clusters..."
+    kubectl delete clusters.postgresql.cnpg.io --all --ignore-not-found=true --force --grace-period=0 &
+    
+    # Get user namespaces (excluding system namespaces and cnpg-system)
     USER_NAMESPACES=$(kubectl get namespaces -o json | \
-        jq -r '.items[] | select(.metadata.name as $ns | ["kube-system","kube-public","kube-node-lease","azure-arc","gatekeeper-system","default"] | index($ns) | not) | .metadata.name')
+        jq -r '.items[] | select(.metadata.name as $ns | ["kube-system","kube-public","kube-node-lease","azure-arc","gatekeeper-system","cnpg-system","default"] | index($ns) | not) | .metadata.name')
     
     # Force delete all deployments in user namespaces
     echo "Force deleting all deployments..."
@@ -150,6 +154,8 @@ cleanup_cluster() {
     kubectl get sc
     echo -e "\nACStor components (kept intact):"
     kubectl get pods -n kube-system | grep -E "(acstor|local-csi)" || echo "No ACStor pods found"
+    echo -e "\nCNPG operator (kept intact):"
+    kubectl get pods -n cnpg-system 2>/dev/null || echo "No CNPG operator found"
 }
 
 # Function to check if kubectl is connected to an AKS cluster with Azure Container Storage v2.0.0
@@ -163,6 +169,24 @@ check_existing_cluster() {
     
     echo "Found existing AKS cluster with Azure Container Storage v2.0.0 extension!"
     return 0
+}
+
+# Function to install CNPG operator
+install_cnpg_operator() {
+    echo "Installing CloudNativePG operator..."
+    
+    # Install CNPG using kubectl
+    kubectl apply --server-side -f \
+        https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.27/releases/cnpg-1.27.0.yaml
+    
+    # Wait for CNPG operator to be ready
+    echo "Waiting for CNPG operator to be ready..."
+    kubectl wait --for=condition=Available \
+        --namespace cnpg-system \
+        deployment/cnpg-controller-manager \
+        --timeout=300s
+    
+    echo "CNPG operator installed successfully!"
 }
 
 # Function to apply storage class
@@ -254,215 +278,204 @@ EOF
     echo "  kubectl get sc"
 }
 
-# Function to create PostgreSQL deployment with specific storage class
-create_postgresql_deployment() {
+# Function to create CNPG PostgreSQL cluster with HA
+create_cnpg_postgresql_cluster() {
     local storage_class=$1
-    local deployment_name="postgres-${storage_class//-/}"
-    local service_name="${deployment_name}-service"
+    local cluster_name="postgres-cnpg-${storage_class//-/}"
+    local instances=${2:-3}  # Default to 3 instances for HA
+    local storage_size="100Gi"
     
-    echo "Creating PostgreSQL deployment with storage class: $storage_class"
+    echo "Creating CNPG PostgreSQL cluster with storage class: $storage_class"
+    echo "Cluster name: $cluster_name"
+    echo "Instances: $instances (1 primary + $(($instances-1)) replicas)"
     
-    # Delete existing deployment if it exists
-    kubectl delete deployment "$deployment_name" --ignore-not-found=true
-    kubectl delete service "$service_name" --ignore-not-found=true
-    kubectl delete pvc "${deployment_name}-pvc" --ignore-not-found=true
-    kubectl wait --for=delete deployment/"$deployment_name" --timeout=120s 2>/dev/null || true
-    kubectl wait --for=delete pvc/"${deployment_name}-pvc" --timeout=120s 2>/dev/null || true
+    # Ensure CNPG operator is installed
+    install_cnpg_operator
     
-    # Create PVC with annotation for local storage class
+    # Delete existing cluster if it exists
+    kubectl delete cluster "$cluster_name" --ignore-not-found=true 2>/dev/null
+    kubectl wait --for=delete cluster/"$cluster_name" --timeout=120s 2>/dev/null || true
+    
+    # Set storage size based on storage class
     if [[ "$storage_class" == "local" ]]; then
-        kubectl apply -f - <<EOF
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: ${deployment_name}-pvc
-  annotations:
-    localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: $storage_class
-  resources:
-    requests:
-      storage: 100Gi
-EOF
+        storage_size="100Gi"
     elif [[ "$storage_class" == "premium2-disk-sc" ]]; then
-        kubectl apply -f - <<EOF
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: ${deployment_name}-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: $storage_class
-  resources:
-    requests:
-      storage: 1Ti
-EOF
+        storage_size="1Ti"
     else
-        kubectl apply -f - <<EOF
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: ${deployment_name}-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: $storage_class
-  resources:
-    requests:
-      storage: 8Ti
-EOF
+        storage_size="8Ti"
     fi
     
-    # Create PostgreSQL deployment
+    # Create CNPG cluster with HA configuration
+    # Add inheritedMetadata for local storage if needed
+    local inherited_metadata=""
+    if [[ "$storage_class" == "local" ]]; then
+        inherited_metadata='inheritedMetadata:
+    annotations:
+      "localdisk.csi.acstor.io/accept-ephemeral-storage": "true"
+  '
+    fi
+    
     kubectl apply -f - <<EOF
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
 metadata:
-  name: $deployment_name
+  name: $cluster_name
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: $deployment_name
-  template:
-    metadata:
-      labels:
-        app: $deployment_name
-    spec:
-      nodeSelector:
-        "kubernetes.io/os": linux
-      securityContext:
-        fsGroup: 999
-      containers:
-      - name: postgres
-        image: postgres:15
-        securityContext:
-          runAsUser: 999
-          runAsGroup: 999
-          runAsNonRoot: true
-        env:
-        - name: POSTGRES_PASSWORD
-          value: "benchmark123"
-        - name: POSTGRES_DB
-          value: "benchmarkdb"
-        - name: POSTGRES_USER
-          value: "postgres"
-        - name: PGDATA
-          value: "/var/lib/postgresql/data/pgdata"
-        ports:
-        - containerPort: 5432
-        volumeMounts:
-        - name: postgres-storage
-          mountPath: /var/lib/postgresql/data
-        # Start PostgreSQL with optimized configuration
-        # Note: monitoring tools install skipped since container runs as non-root
-        args:
-        - postgres
-        - -c
-        - shared_buffers=2GB
-        - -c
-        - effective_cache_size=4GB
-        - -c
-        - synchronous_commit=on
-        - -c
-        - full_page_writes=on
-        - -c
-        - wal_compression=off
-        - -c
-        - checkpoint_timeout=15min
-        - -c
-        - max_wal_size=2GB
-        - -c
-        - wal_buffers=16MB
-        - -c
-        - log_checkpoints=on
-        - -c
-        - log_statement=none
-        - -c
-        - log_min_duration_statement=1000
-      volumes:
-      - name: postgres-storage
-        persistentVolumeClaim:
-          claimName: ${deployment_name}-pvc
----
+  ${inherited_metadata}instances: $instances
+  primaryUpdateStrategy: unsupervised
+  
+  postgresql:
+    parameters:
+      shared_buffers: "2GB"
+      effective_cache_size: "4GB"
+      max_connections: "200"
+      checkpoint_completion_target: "0.9"
+      wal_buffers: "16MB"
+      default_statistics_target: "100"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "200"
+      work_mem: "16MB"
+      maintenance_work_mem: "256MB"
+      min_wal_size: "1GB"
+      max_wal_size: "4GB"
+      checkpoint_timeout: "15min"
+      max_worker_processes: "8"
+      max_parallel_workers_per_gather: "4"
+      max_parallel_workers: "8"
+      max_parallel_maintenance_workers: "4"
+      log_checkpoints: "on"
+      log_statement: "none"
+      log_min_duration_statement: "1000"
+      synchronous_commit: "on"
+      full_page_writes: "on"
+      wal_compression: "off"
+      
+  bootstrap:
+    initdb:
+      database: benchmarkdb
+      owner: postgres
+      secret:
+        name: ${cluster_name}-superuser
+      dataChecksums: true
+      
+  storage:
+    storageClass: $storage_class
+    size: $storage_size
+    pvcTemplate:
+      accessModes:
+        - ReadWriteOnce
+      
+  enablePDB: true
+EOF
+
+    # Create superuser secret
+    kubectl apply -f - <<EOF
 apiVersion: v1
-kind: Service
+kind: Secret
 metadata:
-  name: $service_name
-spec:
-  selector:
-    app: $deployment_name
-  ports:
-  - port: 5432
-    targetPort: 5432
-  type: ClusterIP
+  name: ${cluster_name}-superuser
+type: kubernetes.io/basic-auth
+stringData:
+  username: postgres
+  password: benchmark123
 EOF
     
-    echo "Waiting for PostgreSQL to be ready..."
-    kubectl wait --for=condition=Available deployment/"$deployment_name" --timeout=600s
-    
-    # Wait for PostgreSQL to be accepting connections
-    echo "Waiting for PostgreSQL to accept connections..."
-    local retries=30
+    echo "Waiting for CNPG cluster to be ready..."
+    local retries=60
     while [ $retries -gt 0 ]; do
-        if kubectl exec -it deployment/"$deployment_name" -- pg_isready -U postgres >/dev/null 2>&1; then
-            echo "PostgreSQL is ready!"
+        if kubectl get cluster "$cluster_name" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Cluster in healthy state"; then
+            echo "CNPG cluster is ready!"
             break
         fi
-        echo "Waiting for PostgreSQL... (retries left: $retries)"
-        sleep 5
+        
+        # Check if at least primary is ready
+        local ready_instances=$(kubectl get cluster "$cluster_name" -o jsonpath='{.status.readyInstances}' 2>/dev/null)
+        ready_instances=${ready_instances:-0}
+        if [ "$ready_instances" -ge 1 ]; then
+            echo "Primary instance is ready (${ready_instances}/${instances} instances ready)"
+            break
+        fi
+        
+        echo "Waiting for CNPG cluster... (retries left: $retries)"
+        kubectl get cluster "$cluster_name" --no-headers 2>/dev/null || true
+        sleep 10
         retries=$((retries - 1))
     done
     
     if [ $retries -eq 0 ]; then
-        echo "Error: PostgreSQL did not become ready in time"
-        return 1
+        echo "Warning: CNPG cluster may not be fully ready"
+        kubectl describe cluster "$cluster_name"
     fi
+    
+    # Show cluster status
+    echo ""
+    echo "CNPG Cluster Status:"
+    kubectl get cluster "$cluster_name"
+    kubectl get pods -l cnpg.io/cluster="$cluster_name"
+    echo ""
 }
 
-# Function to initialize pgbench database
-initialize_pgbench_database() {
-    local deployment_name=$1
+
+# Function to initialize pgbench database for CNPG cluster
+initialize_cnpg_pgbench_database() {
+    local cluster_name=$1
     local scale_factor=${2:-1000}  # Large scale factor to overwhelm caching
     
     echo "Initializing pgbench database with scale factor $scale_factor..."
-    kubectl exec -it deployment/"$deployment_name" -- pgbench -i -s "$scale_factor" -U postgres benchmarkdb
+    
+    # Get the primary pod name
+    local primary_pod=$(kubectl get pods -l cnpg.io/cluster="$cluster_name",cnpg.io/instanceRole=primary -o jsonpath='{.items[0].metadata.name}')
+    
+    if [ -z "$primary_pod" ]; then
+        echo "Error: Could not find primary pod for cluster $cluster_name"
+        return 1
+    fi
+    
+    echo "Using primary pod: $primary_pod"
+    kubectl exec -it "$primary_pod" -- pgbench -i -s "$scale_factor" -U postgres benchmarkdb
 }
 
-# Function to run pgbench benchmark
-run_pgbench_test() {
-    local deployment_name=$1
+# Function to run pgbench benchmark on CNPG cluster
+run_cnpg_pgbench_test() {
+    local cluster_name=$1
     local test_name=$2
     local clients=${3:-8}  # Moderate clients to avoid CPU bottleneck
-    local duration=${4:-60}  # 1 minute
+    local duration=${4:-300}  # 5 minutes
     
-    echo "=== PostgreSQL Benchmark Test: $test_name ==="
-    echo "Deployment: $deployment_name"
+    echo "=== PostgreSQL CNPG HA Benchmark Test: $test_name ==="
+    echo "Cluster: $cluster_name"
     echo "Clients: $clients"
     echo "Duration: ${duration}s"
-    echo "Storage class: $(kubectl get pvc "${deployment_name}-pvc" -o jsonpath='{.spec.storageClassName}')"
+    
+    # Get the primary pod name
+    local primary_pod=$(kubectl get pods -l cnpg.io/cluster="$cluster_name",cnpg.io/instanceRole=primary -o jsonpath='{.items[0].metadata.name}')
+    
+    if [ -z "$primary_pod" ]; then
+        echo "Error: Could not find primary pod for cluster $cluster_name"
+        return 1
+    fi
+    
+    echo "Primary pod: $primary_pod"
+    echo "Storage class: $(kubectl get cluster "$cluster_name" -o jsonpath='{.spec.storage.storageClass}')"
     echo ""
     
-    # Run a 30-second warm-up
-    echo "Running 30-second warm-up..."
-    kubectl exec -it deployment/"$deployment_name" -- pgbench -c "$clients" -j "$clients" -T 30 -U postgres benchmarkdb >/dev/null 2>&1
+    # Run a 120-second warm-up
+    echo "Running 120-second warm-up..."
+    kubectl exec -it "$primary_pod" -- pgbench -c "$clients" -j "$clients" -T 120 -U postgres benchmarkdb >/dev/null 2>&1
     
     echo ""
     echo "Starting main benchmark test..."
     echo "Monitor PostgreSQL activity in another terminal with:"
-    echo "  kubectl exec -it deployment/$deployment_name -- psql -U postgres -d benchmarkdb -c 'SELECT * FROM pg_stat_activity;'"
+    echo "  kubectl exec -it $primary_pod -- psql -U postgres -d benchmarkdb -c 'SELECT * FROM pg_stat_activity;'"
+    echo "  kubectl exec -it $primary_pod -- psql -U postgres -d benchmarkdb -c 'SELECT * FROM pg_stat_replication;'"
     echo ""
     
     # Run main benchmark with live reporting
-    kubectl exec -it deployment/"$deployment_name" -- pgbench \
+    kubectl exec -it "$primary_pod" -- pgbench \
         -c "$clients" \
         -j "$clients" \
         -T "$duration" \
-        -P 3 \
-        --progress-timestamp \
+        -P 10 \
         -U postgres \
         benchmarkdb
     
@@ -471,48 +484,57 @@ run_pgbench_test() {
     echo ""
 }
 
-# Function to run single PostgreSQL benchmark
+# Function to run single PostgreSQL benchmark with CNPG HA
 run_single_postgresql_benchmark() {
+    cleanup_cluster
     apply_storage_class
-    create_postgresql_deployment "local"
-    initialize_pgbench_database "postgres-local"
-    run_pgbench_test "postgres-local" "Local NVMe + Azure Container Storage"
+    create_cnpg_postgresql_cluster "local" 3  # 3 instances for HA
+    initialize_cnpg_pgbench_database "postgres-cnpg-local"
+    run_cnpg_pgbench_test "postgres-cnpg-local" "Local NVMe + Azure Container Storage (CNPG HA)"
     
     echo ""
-    echo "PostgreSQL benchmark completed successfully!"
+    echo "PostgreSQL CNPG HA benchmark completed successfully!"
     echo ""
     echo "Useful monitoring commands:"
-    echo "  kubectl exec -it deployment/postgres-local -- psql -U postgres -d benchmarkdb -c 'SELECT * FROM pg_stat_activity;'  # Monitor active queries"
-    echo "  kubectl top pod -l app=postgres-local                        # Monitor CPU/memory usage"
-    echo "  kubectl logs deployment/postgres-local -f                    # View PostgreSQL logs"
+    local primary_pod=$(kubectl get pods -l cnpg.io/cluster="postgres-cnpg-local",cnpg.io/instanceRole=primary -o jsonpath='{.items[0].metadata.name}')
+    echo "  kubectl exec -it $primary_pod -- psql -U postgres -d benchmarkdb -c 'SELECT * FROM pg_stat_activity;'  # Monitor active queries"
+    echo "  kubectl exec -it $primary_pod -- psql -U postgres -d benchmarkdb -c 'SELECT * FROM pg_stat_replication;'  # Monitor replication"
+    echo "  kubectl top pod -l cnpg.io/cluster=postgres-cnpg-local       # Monitor CPU/memory usage"
+    echo "  kubectl logs $primary_pod -f                                 # View PostgreSQL logs"
+    echo "  kubectl get cluster postgres-cnpg-local                      # View cluster status"
+    echo "  kubectl get pods -l cnpg.io/cluster=postgres-cnpg-local      # View all cluster pods"
     echo "  kubectl get pvc                                              # View storage claims"
 }
 
-# Function to run Azure Premium SSD v2 PostgreSQL benchmark
+# Function to run Azure Premium SSD v2 PostgreSQL benchmark with CNPG HA
 run_comparative_postgresql_benchmark() {
+    cleanup_cluster
     apply_storage_class
     apply_premium_v2_storage_class
     
-    echo "=== Starting Azure Premium SSD v2 PostgreSQL Benchmark ==="
-    echo "This will test PostgreSQL performance on Azure Premium SSD v2 with maximal performance (80k IOPS, 1200 MBps)"
+    echo "=== Starting Azure Premium SSD v2 PostgreSQL CNPG HA Benchmark ==="
+    echo "This will test PostgreSQL HA performance on Azure Premium SSD v2 with maximal performance (80k IOPS, 1200 MBps)"
     echo ""
     
-    # Test: Premium SSD v2 with high performance settings
-    echo "=== Azure Premium SSD v2 Test ==="
-    create_postgresql_deployment "premium2-disk-sc"
-    initialize_pgbench_database "postgres-premium2disksc"
-    run_pgbench_test "postgres-premium2disksc" "Azure Premium SSD v2 (80k IOPS, 1200 MBps)"
+    # Test: Premium SSD v2 with high performance settings and CNPG HA
+    echo "=== Azure Premium SSD v2 CNPG HA Test ==="
+    create_cnpg_postgresql_cluster "premium2-disk-sc" 3  # 3 instances for HA
+    initialize_cnpg_pgbench_database "postgres-cnpg-premium2disksc"
+    run_cnpg_pgbench_test "postgres-cnpg-premium2disksc" "Azure Premium SSD v2 (80k IOPS, 1200 MBps) with CNPG HA"
     
     echo ""
-    echo "=== Azure Premium SSD v2 PostgreSQL Benchmark Complete ==="
+    echo "=== Azure Premium SSD v2 PostgreSQL CNPG HA Benchmark Complete ==="
     echo ""
-    echo "PostgreSQL instance is running. You can:"
-    echo "  kubectl top pod -l app=postgres-premium2disksc                     # Monitor Premium SSD v2 resource usage"
+    echo "PostgreSQL CNPG HA cluster is running. You can:"
+    local primary_pod=$(kubectl get pods -l cnpg.io/cluster="postgres-cnpg-premium2disksc",cnpg.io/instanceRole=primary -o jsonpath='{.items[0].metadata.name}')
+    echo "  kubectl top pod -l cnpg.io/cluster=postgres-cnpg-premium2disksc     # Monitor Premium SSD v2 resource usage"
+    echo "  kubectl get cluster postgres-cnpg-premium2disksc                    # View cluster status"
+    echo "  kubectl get pods -l cnpg.io/cluster=postgres-cnpg-premium2disksc    # View all cluster pods"
     echo "  kubectl get pvc                                                     # View storage claims"
     echo "  kubectl describe pv                                                 # View persistent volume details"
     echo ""
     echo "To run additional tests:"
-    echo "  kubectl exec -it deployment/postgres-premium2disksc -- pgbench -c 8 -j 8 -T 60 -P 3 --progress-timestamp -U postgres benchmarkdb"
+    echo "  kubectl exec -it $primary_pod -- pgbench -c 8 -j 8 -T 60 -P 10 -U postgres benchmarkdb"
 }
 
 # Function to create new AKS cluster
