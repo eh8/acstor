@@ -16,6 +16,8 @@ Usage: $0 [OPTIONS]
 OPTIONS:
     --iops                Run IOPS test mode (4k block size)
     --bandwidth           Run bandwidth test mode (128k block size)
+    --pgsql               Run PostgreSQL benchmark on local NVMe + Azure Container Storage
+    --pgsql-azure-disk    Run PostgreSQL benchmark on Azure Disks Premium SSD only
     --cleanup             Reset cluster by removing stale PVCs and pods (keeps ACStor and storage classes)
     --force-new-cluster   Force creation of new AKS cluster (ignores existing cluster)
     --help, -h           Show this help message
@@ -23,6 +25,8 @@ OPTIONS:
 EXAMPLES:
     $0 --iops                    # Run IOPS test on existing or new cluster
     $0 --bandwidth               # Run bandwidth test on existing or new cluster
+    $0 --pgsql                   # Run PostgreSQL benchmark on local NVMe storage
+    $0 --pgsql-azure-disk        # Run PostgreSQL benchmark on Azure Disks Premium SSD
     $0 --cleanup                 # Clean up stale resources
     $0 --iops --force-new-cluster # Force new cluster and run IOPS test
 
@@ -45,6 +49,14 @@ for arg in "$@"; do
         --bandwidth)
             RUN_MODE="bandwidth"
             echo "Running in bandwidth test mode (128k block size)"
+            ;;
+        --pgsql)
+            RUN_MODE="pgsql"
+            echo "Running PostgreSQL benchmark on local NVMe + Azure Container Storage"
+            ;;
+        --pgsql-azure-disk)
+            RUN_MODE="pgsql-azure-disk"
+            echo "Running PostgreSQL benchmark on Azure Disks Premium SSD only"
             ;;
         --cleanup)
             RUN_MODE="cleanup"
@@ -75,26 +87,65 @@ fi
 
 # Function to cleanup stale PVCs and pods while keeping ACStor and storage classes
 cleanup_cluster() {
-    echo "Performing cluster cleanup..."
+    echo "Performing aggressive cluster cleanup..."
     
     if ! kubectl cluster-info &>/dev/null; then
         echo "Error: No active kubectl context found."
         exit 1
     fi
     
-    # Delete all user pods (exclude system namespaces)
-    echo "Cleaning up user pods..."
+    # Get user namespaces (excluding system namespaces)
+    USER_NAMESPACES=$(kubectl get namespaces -o json | \
+        jq -r '.items[] | select(.metadata.name as $ns | ["kube-system","kube-public","kube-node-lease","azure-arc","gatekeeper-system","default"] | index($ns) | not) | .metadata.name')
+    
+    # Force delete all deployments in user namespaces
+    echo "Force deleting all deployments..."
+    for ns in $USER_NAMESPACES; do
+        kubectl delete deployments --all -n "$ns" --ignore-not-found=true --force --grace-period=0 &
+    done
+    kubectl delete deployments --all -n default --ignore-not-found=true --force --grace-period=0 &
+    
+    # Force delete all services in user namespaces  
+    echo "Force deleting all services..."
+    for ns in $USER_NAMESPACES; do
+        kubectl delete services --all -n "$ns" --ignore-not-found=true --force --grace-period=0 &
+    done
+    kubectl delete services --all -n default --ignore-not-found=true --force --grace-period=0 &
+    
+    # Force delete all pods in parallel
+    echo "Force deleting all user pods..."
     kubectl get pods --all-namespaces -o json | \
-        jq -r '.items[] | select(.metadata.namespace as $ns | ["kube-system","kube-public","kube-node-lease","azure-arc","gatekeeper-system"] | index($ns) | not) | "\(.metadata.namespace)/\(.metadata.name)"' | \
-        while read -r pod; do
-            [[ -n "$pod" ]] && kubectl delete pod "${pod##*/}" -n "${pod%%/*}" --ignore-not-found=true --grace-period=30
+        jq -r '.items[] | select(.metadata.namespace as $ns | ["kube-system","kube-public","kube-node-lease","azure-arc","gatekeeper-system"] | index($ns) | not) | "\(.metadata.namespace) \(.metadata.name)"' | \
+        while read -r ns pod; do
+            [[ -n "$pod" ]] && kubectl delete pod "$pod" -n "$ns" --ignore-not-found=true --force --grace-period=0 &
         done
     
-    # Delete all PVCs
-    echo "Cleaning up PVCs..."
-    kubectl delete pvc --all --all-namespaces --ignore-not-found=true
+    # Wait a moment for parallel deletions to start
+    sleep 2
     
-    echo -e "\nCleanup completed. Remaining resources:"
+    # Force delete all PVCs with finalizer removal
+    echo "Force deleting all PVCs..."
+    kubectl get pvc --all-namespaces -o json | \
+        jq -r '.items[] | "\(.metadata.namespace) \(.metadata.name)"' | \
+        while read -r ns pvc; do
+            # Remove finalizers and force delete
+            kubectl patch pvc "$pvc" -n "$ns" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null &
+            kubectl delete pvc "$pvc" -n "$ns" --ignore-not-found=true --force --grace-period=0 2>/dev/null &
+        done
+    
+    # Wait for background processes to complete
+    echo "Waiting for cleanup processes to complete..."
+    wait
+    
+    # Final cleanup - remove stuck resources
+    echo "Removing any stuck resources..."
+    kubectl get pods --all-namespaces --field-selector=status.phase!=Running -o json | \
+        jq -r '.items[] | select(.metadata.namespace as $ns | ["kube-system","kube-public","kube-node-lease","azure-arc","gatekeeper-system"] | index($ns) | not) | "\(.metadata.namespace) \(.metadata.name)"' | \
+        while read -r ns pod; do
+            kubectl patch pod "$pod" -n "$ns" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null
+        done
+    
+    echo -e "\nAggressive cleanup completed. Remaining resources:"
     echo -e "\nStorage Classes (kept intact):"
     kubectl get sc
     echo -e "\nACStor components (kept intact):"
@@ -127,6 +178,8 @@ volumeBindingMode: WaitForFirstConsumer
 allowVolumeExpansion: true
 EOF
 }
+
+# Note: managed-csi-premium storage class is provided by the preinstalled Azure Disk CSI driver
 
 # Function to create and run fio test pod
 create_and_run_fio_pod() {
@@ -180,6 +233,252 @@ EOF
     echo "  kubectl get pods"
     echo "  kubectl get pvc"
     echo "  kubectl get sc"
+}
+
+# Function to create PostgreSQL deployment with specific storage class
+create_postgresql_deployment() {
+    local storage_class=$1
+    local deployment_name="postgres-${storage_class//-/}"
+    local service_name="${deployment_name}-service"
+    
+    echo "Creating PostgreSQL deployment with storage class: $storage_class"
+    
+    # Delete existing deployment if it exists
+    kubectl delete deployment "$deployment_name" --ignore-not-found=true
+    kubectl delete service "$service_name" --ignore-not-found=true
+    kubectl delete pvc "${deployment_name}-pvc" --ignore-not-found=true
+    kubectl wait --for=delete deployment/"$deployment_name" --timeout=120s 2>/dev/null || true
+    kubectl wait --for=delete pvc/"${deployment_name}-pvc" --timeout=120s 2>/dev/null || true
+    
+    # Create PVC with annotation for local storage class
+    if [[ "$storage_class" == "local" ]]; then
+        kubectl apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${deployment_name}-pvc
+  annotations:
+    localdisk.csi.acstor.io/accept-ephemeral-storage: "true"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: $storage_class
+  resources:
+    requests:
+      storage: 100Gi
+EOF
+    else
+        kubectl apply -f - <<EOF
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${deployment_name}-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: $storage_class
+  resources:
+    requests:
+      storage: 8Ti
+EOF
+    fi
+    
+    # Create PostgreSQL deployment
+    kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $deployment_name
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: $deployment_name
+  template:
+    metadata:
+      labels:
+        app: $deployment_name
+    spec:
+      nodeSelector:
+        "kubernetes.io/os": linux
+      securityContext:
+        fsGroup: 999
+      containers:
+      - name: postgres
+        image: postgres:15
+        securityContext:
+          runAsUser: 999
+          runAsGroup: 999
+          runAsNonRoot: true
+        env:
+        - name: POSTGRES_PASSWORD
+          value: "benchmark123"
+        - name: POSTGRES_DB
+          value: "benchmarkdb"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: PGDATA
+          value: "/var/lib/postgresql/data/pgdata"
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data
+        # Start PostgreSQL with optimized configuration
+        # Note: monitoring tools install skipped since container runs as non-root
+        args:
+        - postgres
+        - -c
+        - shared_buffers=2GB
+        - -c
+        - effective_cache_size=4GB
+        - -c
+        - synchronous_commit=on
+        - -c
+        - full_page_writes=on
+        - -c
+        - wal_compression=off
+        - -c
+        - checkpoint_timeout=15min
+        - -c
+        - max_wal_size=2GB
+        - -c
+        - wal_buffers=16MB
+        - -c
+        - log_checkpoints=on
+        - -c
+        - log_statement=none
+        - -c
+        - log_min_duration_statement=1000
+      volumes:
+      - name: postgres-storage
+        persistentVolumeClaim:
+          claimName: ${deployment_name}-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $service_name
+spec:
+  selector:
+    app: $deployment_name
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+EOF
+    
+    echo "Waiting for PostgreSQL to be ready..."
+    kubectl wait --for=condition=Available deployment/"$deployment_name" --timeout=600s
+    
+    # Wait for PostgreSQL to be accepting connections
+    echo "Waiting for PostgreSQL to accept connections..."
+    local retries=30
+    while [ $retries -gt 0 ]; do
+        if kubectl exec -it deployment/"$deployment_name" -- pg_isready -U postgres >/dev/null 2>&1; then
+            echo "PostgreSQL is ready!"
+            break
+        fi
+        echo "Waiting for PostgreSQL... (retries left: $retries)"
+        sleep 5
+        retries=$((retries - 1))
+    done
+    
+    if [ $retries -eq 0 ]; then
+        echo "Error: PostgreSQL did not become ready in time"
+        return 1
+    fi
+}
+
+# Function to initialize pgbench database
+initialize_pgbench_database() {
+    local deployment_name=$1
+    local scale_factor=${2:-1000}  # Large scale factor to overwhelm caching
+    
+    echo "Initializing pgbench database with scale factor $scale_factor..."
+    kubectl exec -it deployment/"$deployment_name" -- pgbench -i -s "$scale_factor" -U postgres benchmarkdb
+}
+
+# Function to run pgbench benchmark
+run_pgbench_test() {
+    local deployment_name=$1
+    local test_name=$2
+    local clients=${3:-8}  # Moderate clients to avoid CPU bottleneck
+    local duration=${4:-60}  # 1 minute
+    
+    echo "=== PostgreSQL Benchmark Test: $test_name ==="
+    echo "Deployment: $deployment_name"
+    echo "Clients: $clients"
+    echo "Duration: ${duration}s"
+    echo "Storage class: $(kubectl get pvc "${deployment_name}-pvc" -o jsonpath='{.spec.storageClassName}')"
+    echo ""
+    
+    # Run a 30-second warm-up
+    echo "Running 30-second warm-up..."
+    kubectl exec -it deployment/"$deployment_name" -- pgbench -c "$clients" -j "$clients" -T 30 -U postgres benchmarkdb >/dev/null 2>&1
+    
+    echo ""
+    echo "Starting main benchmark test..."
+    echo "Monitor PostgreSQL activity in another terminal with:"
+    echo "  kubectl exec -it deployment/$deployment_name -- psql -U postgres -d benchmarkdb -c 'SELECT * FROM pg_stat_activity;'"
+    echo ""
+    
+    # Run main benchmark with live reporting
+    kubectl exec -it deployment/"$deployment_name" -- pgbench \
+        -c "$clients" \
+        -j "$clients" \
+        -T "$duration" \
+        -P 3 \
+        --progress-timestamp \
+        -U postgres \
+        benchmarkdb
+    
+    echo ""
+    echo "=== Test Complete: $test_name ==="
+    echo ""
+}
+
+# Function to run single PostgreSQL benchmark
+run_single_postgresql_benchmark() {
+    apply_storage_class
+    create_postgresql_deployment "local"
+    initialize_pgbench_database "postgres-local"
+    run_pgbench_test "postgres-local" "Local NVMe + Azure Container Storage"
+    
+    echo ""
+    echo "PostgreSQL benchmark completed successfully!"
+    echo ""
+    echo "Useful monitoring commands:"
+    echo "  kubectl exec -it deployment/postgres-local -- psql -U postgres -d benchmarkdb -c 'SELECT * FROM pg_stat_activity;'  # Monitor active queries"
+    echo "  kubectl top pod -l app=postgres-local                        # Monitor CPU/memory usage"
+    echo "  kubectl logs deployment/postgres-local -f                    # View PostgreSQL logs"
+    echo "  kubectl get pvc                                              # View storage claims"
+}
+
+# Function to run Azure disk PostgreSQL benchmark
+run_comparative_postgresql_benchmark() {
+    apply_storage_class
+    
+    echo "=== Starting Azure Disk PostgreSQL Benchmark ==="
+    echo "This will test PostgreSQL performance on Azure Disks Premium SSD (managed-csi-premium)"
+    echo ""
+    
+    # Test: Premium managed disk only
+    echo "=== Azure Disks Premium SSD Test ==="
+    create_postgresql_deployment "managed-csi-premium"
+    initialize_pgbench_database "postgres-managedcsipremium"
+    run_pgbench_test "postgres-managedcsipremium" "Azure Disks Premium SSD"
+    
+    echo ""
+    echo "=== Azure Disk PostgreSQL Benchmark Complete ==="
+    echo ""
+    echo "PostgreSQL instance is running. You can:"
+    echo "  kubectl top pod -l app=postgres-managedcsipremium                  # Monitor premium disk resource usage"
+    echo "  kubectl get pvc                                                     # View storage claims"
+    echo "  kubectl describe pv                                                 # View persistent volume details"
+    echo ""
+    echo "To run additional tests:"
+    echo "  kubectl exec -it deployment/postgres-managedcsipremium -- pgbench -c 8 -j 8 -T 60 -P 3 --progress-timestamp -U postgres benchmarkdb"
 }
 
 # Function to create new AKS cluster
@@ -244,6 +543,26 @@ case $RUN_MODE in
             create_new_cluster
             apply_storage_class
             create_and_run_fio_pod "$RUN_MODE"
+        fi
+        ;;
+    pgsql)
+        if [[ "$FORCE_NEW_CLUSTER" == "false" ]] && check_existing_cluster; then
+            echo "Using existing cluster, running PostgreSQL benchmark..."
+            run_single_postgresql_benchmark
+        else
+            echo "${FORCE_NEW_CLUSTER:+Forcing creation of new AKS cluster...}${FORCE_NEW_CLUSTER:-No existing AKS cluster with Azure Container Storage v2.0.0 found. Creating new cluster...}"
+            create_new_cluster
+            run_single_postgresql_benchmark
+        fi
+        ;;
+    pgsql-azure-disk)
+        if [[ "$FORCE_NEW_CLUSTER" == "false" ]] && check_existing_cluster; then
+            echo "Using existing cluster, running Azure disk PostgreSQL benchmark..."
+            run_comparative_postgresql_benchmark
+        else
+            echo "${FORCE_NEW_CLUSTER:+Forcing creation of new AKS cluster...}${FORCE_NEW_CLUSTER:-No existing AKS cluster with Azure Container Storage v2.0.0 found. Creating new cluster...}"
+            create_new_cluster
+            run_comparative_postgresql_benchmark
         fi
         ;;
 esac
