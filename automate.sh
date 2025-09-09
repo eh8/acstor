@@ -243,7 +243,7 @@ spec:
     "kubernetes.io/os": linux
   containers:
     - name: fio
-      image: nixery.dev/shell/fio
+      image: openeuler/fio
       args: ["sleep", "1000000"]
       volumeMounts:
         - mountPath: "/volume"
