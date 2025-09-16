@@ -265,7 +265,7 @@ EOF
     kubectl wait --for=condition=Ready pod/fiopod --timeout=300s
     
     # Run fio benchmark
-    local FIO_PARAMS="--name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randrw --ioengine=io_uring --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15"
+    local FIO_PARAMS="--name=benchtest --size=800m --filename=/volume/test --direct=1 --rw=randread --ioengine=io_uring --iodepth=32 --numjobs=16 --time_based --runtime=60 --group_reporting --ramp_time=15"
     local BLOCK_SIZE=$([[ "$test_mode" == "bandwidth" ]] && echo "128k" || echo "4k")
     
     echo "Running fio benchmark test with block size: $BLOCK_SIZE"
