@@ -568,37 +568,23 @@ create_new_cluster() {
     RANDOM_UUID=$(openssl rand -hex 4)
     RESOURCE_GROUP="rg-ericcheng-${RANDOM_UUID}"
     CLUSTER_NAME="aks-cluster-${RANDOM_UUID}"
-    LOCATION="eastus2"
+    LOCATION="swedencentral"
     
     echo "Creating Azure resource group: ${RESOURCE_GROUP}"
     az group create --name "${RESOURCE_GROUP}" --location "${LOCATION}"
     
-    echo "Creating AKS cluster: ${CLUSTER_NAME}"
+    echo "Creating AKS cluster with Azure Container Storage enabled: ${CLUSTER_NAME}"
     az aks create \
       --resource-group "${RESOURCE_GROUP}" \
       --name "${CLUSTER_NAME}" \
       --node-count 3 \
       --node-vm-size "Standard_L16s_v3" \
-      --enable-managed-identity \
       --generate-ssh-keys \
+      --enable-azure-container-storage \
       --zones 1 2 3
     
     echo "Getting AKS credentials"
     az aks get-credentials --resource-group "${RESOURCE_GROUP}" --name "${CLUSTER_NAME}"
-    
-    echo "Installing Azure Container Storage extension"
-    az k8s-extension create \
-      --cluster-type managedClusters \
-      --cluster-name "${CLUSTER_NAME}" \
-      --resource-group "${RESOURCE_GROUP}" \
-      -n acstor \
-      --extension-type microsoft.azurecontainerstoragev2 \
-      --scope cluster \
-      --release-train staging \
-      --release-namespace kube-system \
-      --auto-upgrade-minor-version false \
-      --version 2.0.0-preview.2 \
-      --verbose
     
     echo "Verifying cluster setup"
     kubectl cluster-info

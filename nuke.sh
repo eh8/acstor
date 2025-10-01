@@ -72,7 +72,7 @@ show_dry_run_banner() {
         echo ""
     else
         print_color "$RED" "┌─────────────────────────────────────────────────────────┐"
-        print_color "$RED" "│              ⚠️  DESTRUCTIVE MODE ACTIVE ⚠️               │"
+        print_color "$RED" "│              ⚠️  DESTRUCTIVE MODE ACTIVE ⚠️             │"
         print_color "$RED" "│           Changes WILL be made and are PERMANENT        │"
         print_color "$RED" "└─────────────────────────────────────────────────────────┘"
         echo ""
