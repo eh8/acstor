@@ -6,6 +6,25 @@ set -e
 RUN_MODE=""
 FORCE_NEW_CLUSTER=false
 
+sanitize_for_filename() {
+    local input="$1"
+    local sanitized
+    sanitized=$(echo "$input" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | sed -E 's/^-+//' | sed -E 's/-+$//' | sed -E 's/-+/-/g')
+    echo "${sanitized:-test}"
+}
+
+write_acstor_log_file() {
+    local label="$1"
+    local content="$2"
+    local sanitized_label
+    sanitized_label=$(sanitize_for_filename "$label")
+    local timestamp
+    timestamp=$(date +"%Y%m%d%H%M%S")
+    local filename="acstor-${sanitized_label}-${timestamp}.log.txt"
+    printf '%s\n' "$content" > "$filename"
+    echo "Summary log saved to $filename"
+}
+
 # Function to display help
 show_help() {
     cat << EOF
@@ -93,7 +112,7 @@ cleanup_cluster() {
         echo "Error: No active kubectl context found."
         exit 1
     fi
-    
+
     # Delete all CNPG clusters
     echo "Force deleting all CNPG clusters..."
     kubectl delete clusters.postgresql.cnpg.io --all --ignore-not-found=true --force --grace-period=0 &
@@ -149,13 +168,7 @@ cleanup_cluster() {
             kubectl patch pod "$pod" -n "$ns" -p '{"metadata":{"finalizers":[]}}' --type=merge 2>/dev/null
         done
     
-    echo -e "\nAggressive cleanup completed. Remaining resources:"
-    echo -e "\nStorage Classes (kept intact):"
-    kubectl get sc
-    echo -e "\nACStor components (kept intact):"
-    kubectl get pods -n kube-system | grep -E "(acstor|local-csi)" || echo "No ACStor pods found"
-    echo -e "\nCNPG operator (kept intact):"
-    kubectl get pods -n cnpg-system 2>/dev/null || echo "No CNPG operator found"
+    echo "Cleanup completed."
 }
 
 # Function to check if kubectl is connected to an AKS cluster with Azure Container Storage v2.0.0
@@ -269,8 +282,32 @@ EOF
     local BLOCK_SIZE=$([[ "$test_mode" == "bandwidth" ]] && echo "128k" || echo "4k")
     
     echo "Running fio benchmark test with block size: $BLOCK_SIZE"
-    kubectl exec -it fiopod -- fio $FIO_PARAMS --bs=$BLOCK_SIZE
-    
+    local fio_output
+    if ! fio_output=$(kubectl exec fiopod -- fio $FIO_PARAMS --bs=$BLOCK_SIZE); then
+        echo "Fio benchmark failed"
+        return 1
+    fi
+
+    printf '%s\n' "$fio_output"
+
+    local fio_output_clean
+    fio_output_clean=$(printf '%s\n' "$fio_output" | tr -d '\r')
+    local summary_lines
+    summary_lines=$(printf '%s\n' "$fio_output_clean" | grep -Ei '^(read|write):|^\s*(slat|clat|lat) ' || true)
+    local log_label="fio-$test_mode"
+    local readable_timestamp
+    readable_timestamp=$(date +"%Y-%m-%d %H:%M:%S %Z")
+    local log_body=$'Test: '
+    log_body+="fio ${test_mode:-unknown}"$'\n'
+    log_body+="Block size: $BLOCK_SIZE"$'\n'
+    log_body+="Timestamp: $readable_timestamp"$'\n\nOverview:\n'
+    if [[ -n "$summary_lines" ]]; then
+        log_body+="$summary_lines"
+    else
+        log_body+="No summary lines detected in fio output."
+    fi
+    write_acstor_log_file "$log_label" "$log_body"
+
     echo -e "\nFio test completed successfully!\n"
     echo "To interact with your cluster:"
     echo "  kubectl get pods"
@@ -323,37 +360,23 @@ metadata:
 spec:
   ${inherited_metadata}instances: $instances
   primaryUpdateStrategy: unsupervised
-  
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.0
+
   postgresql:
     parameters:
-      shared_buffers: "128MB"
-      effective_cache_size: "256MB"
-      max_connections: "500"
-      checkpoint_completion_target: "0.5"
-      wal_buffers: "1MB"
-      default_statistics_target: "100"
-      random_page_cost: "4.0"
-      seq_page_cost: "1.0"
-      effective_io_concurrency: "200"
-      work_mem: "4MB"
-      maintenance_work_mem: "256MB"
-      min_wal_size: "1GB"
-      max_wal_size: "4GB"
+      max_wal_size: "32GB"
+      min_wal_size: "8GB"
       checkpoint_timeout: "15min"
-      checkpoint_flush_after: "0"
-      max_worker_processes: "8"
-      max_parallel_workers_per_gather: "4"
-      max_parallel_workers: "8"
-      max_parallel_maintenance_workers: "4"
-      log_checkpoints: "on"
-      log_statement: "none"
-      log_min_duration_statement: "1000"
-      synchronous_commit: "on"
-      full_page_writes: "on"
-      wal_compression: "off"
-      commit_delay: "0"
-      fsync: "on"
-      
+      shared_buffers: "32GB"
+      effective_cache_size: "96GB"
+      work_mem: "256MB"
+      maintenance_work_mem: "8GB"
+      effective_io_concurrency: "512"
+      autovacuum_vacuum_cost_limit: "5000"
+      synchronous_commit: "off"
+      random_page_cost: "1.1"
+      io_method: "io_uring"
+
   bootstrap:
     initdb:
       database: benchmarkdb
@@ -423,7 +446,7 @@ EOF
 # Function to initialize pgbench database for CNPG cluster
 initialize_cnpg_pgbench_database() {
     local cluster_name=$1
-    local scale_factor=${2:-1000}  # Large scale factor to overwhelm caching
+    local scale_factor=${2:-16000}  # Default ~256GB dataset (~16MB per scale) to exceed 128GB RAM
     
     echo "Initializing pgbench database with scale factor $scale_factor..."
     
@@ -459,13 +482,15 @@ run_cnpg_pgbench_test() {
         return 1
     fi
     
+    local storage_class
+    storage_class=$(kubectl get cluster "$cluster_name" -o jsonpath='{.spec.storage.storageClass}')
     echo "Primary pod: $primary_pod"
-    echo "Storage class: $(kubectl get cluster "$cluster_name" -o jsonpath='{.spec.storage.storageClass}')"
+    echo "Storage class: $storage_class"
     echo ""
     
-    # Run a 120-second warm-up
+    # Run a 2-minute warm-up to stabilize caches
     echo "Running 120-second warm-up..."
-    kubectl exec -it "$primary_pod" -- pgbench -c "$clients" -j "$clients" -T 120 -U postgres benchmarkdb >/dev/null 2>&1
+    kubectl exec "$primary_pod" -- pgbench -c "$clients" -j "$clients" -T 120 -U postgres benchmarkdb >/dev/null 2>&1
     
     echo ""
     echo "Starting main benchmark test..."
@@ -475,35 +500,90 @@ run_cnpg_pgbench_test() {
     echo ""
     
     # Run main benchmark with live reporting
-    kubectl exec -it "$primary_pod" -- pgbench \
+    local mixed_output
+    if ! mixed_output=$(kubectl exec "$primary_pod" -- pgbench \
         -c "$clients" \
         -j "$clients" \
         -T "$duration" \
         -P 10 \
         -U postgres \
-        benchmarkdb
+        benchmarkdb); then
+        echo "pgbench mixed workload failed"
+        return 1
+    fi
+    printf '%s\n' "$mixed_output"
     
     echo ""
     echo "=== Running Read-Only Test ==="
-    kubectl exec -it "$primary_pod" -- pgbench \
+    local readonly_output
+    if ! readonly_output=$(kubectl exec "$primary_pod" -- pgbench \
         -c "$clients" \
         -j "$clients" \
         -T "$duration" \
         -P 10 \
         -S \
         -U postgres \
-        benchmarkdb
+        benchmarkdb); then
+        echo "pgbench read-only workload failed"
+        return 1
+    fi
+    printf '%s\n' "$readonly_output"
     
     echo ""
     echo "=== Running Write-Only Test ==="
-    kubectl exec -it "$primary_pod" -- pgbench \
+    local writeonly_output
+    if ! writeonly_output=$(kubectl exec "$primary_pod" -- pgbench \
         -c "$clients" \
         -j "$clients" \
         -T "$duration" \
         -P 10 \
         -N \
         -U postgres \
-        benchmarkdb
+        benchmarkdb); then
+        echo "pgbench write-only workload failed"
+        return 1
+    fi
+    printf '%s\n' "$writeonly_output"
+
+    local readable_timestamp
+    readable_timestamp=$(date +"%Y-%m-%d %H:%M:%S %Z")
+    local log_label="pgbench-$cluster_name"
+    local log_body=$'Test: '
+    log_body+="$test_name"$'\n'
+    log_body+="Cluster: $cluster_name"$'\n'
+    log_body+="Storage class: $storage_class"$'\n'
+    log_body+="Clients: $clients"$'\n'
+    log_body+="Duration: ${duration}s"$'\n'
+    log_body+="Timestamp: $readable_timestamp"$'\n'
+
+    local mixed_summary
+    mixed_summary=$(printf '%s\n' "$mixed_output" | tr -d '\r' | grep -E 'latency average =|tps =' || true)
+    log_body+=$'\n[Mixed Read/Write]\n'
+    if [[ -n "$mixed_summary" ]]; then
+        log_body+="$mixed_summary"$'\n'
+    else
+        log_body+="No TPS/latency summary found."$'\n'
+    fi
+
+    local readonly_summary
+    readonly_summary=$(printf '%s\n' "$readonly_output" | tr -d '\r' | grep -E 'latency average =|tps =' || true)
+    log_body+=$'\n[Read-Only]\n'
+    if [[ -n "$readonly_summary" ]]; then
+        log_body+="$readonly_summary"$'\n'
+    else
+        log_body+="No TPS/latency summary found."$'\n'
+    fi
+
+    local writeonly_summary
+    writeonly_summary=$(printf '%s\n' "$writeonly_output" | tr -d '\r' | grep -E 'latency average =|tps =' || true)
+    log_body+=$'\n[Write-Only]\n'
+    if [[ -n "$writeonly_summary" ]]; then
+        log_body+="$writeonly_summary"$'\n'
+    else
+        log_body+="No TPS/latency summary found."$'\n'
+    fi
+
+    write_acstor_log_file "$log_label" "$log_body"
     
     echo ""
     echo "=== Test Complete: $test_name ==="
@@ -562,6 +642,8 @@ run_comparative_postgresql_benchmark() {
     echo "To run additional tests:"
     echo "  kubectl exec -it $primary_pod -- pgbench -c 8 -j 8 -T 60 -P 10 -U postgres benchmarkdb"
 }
+
+# Function to deploy a Java Minecraft server with PVC on local storage
 
 # Function to create new AKS cluster
 create_new_cluster() {
