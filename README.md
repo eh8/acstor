@@ -79,7 +79,7 @@ The `nuke.sh` script provides safe cleanup operations with preview mode by defau
 
 - **Multiple Test Modes:**
   - IOPS testing with fio (4k block size)
-  - Bandwidth testing with fio (128k block size) 
+  - Bandwidth testing with fio (128k block size)
   - PostgreSQL benchmarking with CloudNativePG (CNPG) operator
   - High Availability PostgreSQL with 3-instance CNPG clusters
 
@@ -97,12 +97,12 @@ The `nuke.sh` script provides safe cleanup operations with preview mode by defau
 
 **Required Dependencies (must be installed first):**
 
-- **Azure CLI (`az`)** version 2.35.0 or later
-  - Install: https://docs.microsoft.com/en-us/cli/azure/install-azure-cli
+- **Azure CLI (`az`)** version 2.77.0 or later with the `amg` and `k8s-extension` add-ons installed
+  - Install: <https://docs.microsoft.com/en-us/cli/azure/install-azure-cli>
   - Verify: `az version`
   
 - **kubectl** command-line tool
-  - Install: https://kubernetes.io/docs/tasks/tools/
+  - Install: <https://kubernetes.io/docs/tasks/tools/>
   - Verify: `kubectl version --client`
   
 - **OpenSSL** (for generating random UUIDs)
@@ -110,7 +110,7 @@ The `nuke.sh` script provides safe cleanup operations with preview mode by defau
   - Verify: `openssl version`
 
 - **jq** JSON processor (required for cluster cleanup operations)
-  - Install: https://stedolan.github.io/jq/download/
+  - Install: <https://stedolan.github.io/jq/download/>
   - Verify: `jq --version`
 
 **Azure Requirements:**

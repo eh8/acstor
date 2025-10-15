@@ -116,6 +116,29 @@ cleanup_cluster() {
     # Delete all CNPG clusters
     echo "Force deleting all CNPG clusters..."
     kubectl delete clusters.postgresql.cnpg.io --all --ignore-not-found=true --force --grace-period=0 &
+
+    # Ensure CNPG operator namespace is removed so controllers don't respawn
+    if kubectl get namespace cnpg-system >/dev/null 2>&1; then
+        echo "Cleaning up cnpg-system namespace..."
+        kubectl delete deployment --all -n cnpg-system --ignore-not-found=true --force --grace-period=0 >/dev/null 2>&1 || true
+        kubectl delete statefulsets --all -n cnpg-system --ignore-not-found=true --force --grace-period=0 >/dev/null 2>&1 || true
+        kubectl delete pods --all -n cnpg-system --ignore-not-found=true --force --grace-period=0 >/dev/null 2>&1 || true
+        kubectl delete services --all -n cnpg-system --ignore-not-found=true >/dev/null 2>&1 || true
+        kubectl delete namespace cnpg-system --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
+
+        # Wait briefly for namespace deletion and strip finalizers if it sticks
+        local attempts=10
+        while kubectl get namespace cnpg-system >/dev/null 2>&1 && [ $attempts -gt 0 ]; do
+            sleep 2
+            attempts=$((attempts - 1))
+        done
+
+        if kubectl get namespace cnpg-system >/dev/null 2>&1; then
+            echo "Removing cnpg-system namespace finalizers..."
+            kubectl patch namespace cnpg-system -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+            kubectl delete namespace cnpg-system --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
+        fi
+    fi
     
     # Get user namespaces (excluding system namespaces and cnpg-system)
     USER_NAMESPACES=$(kubectl get namespaces -o json | \
@@ -446,7 +469,7 @@ EOF
 # Function to initialize pgbench database for CNPG cluster
 initialize_cnpg_pgbench_database() {
     local cluster_name=$1
-    local scale_factor=${2:-16000}  # Default ~256GB dataset (~16MB per scale) to exceed 128GB RAM
+    local scale_factor=${2:-2000}
     
     echo "Initializing pgbench database with scale factor $scale_factor..."
     
