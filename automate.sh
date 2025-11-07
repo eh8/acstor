@@ -36,7 +36,7 @@ OPTIONS:
     --iops                Run IOPS test mode (4k block size)
     --bandwidth           Run bandwidth test mode (128k block size)
     --pgsql               Run PostgreSQL benchmark on local NVMe + Azure Container Storage
-    --pgsql-azure-disk    Run PostgreSQL benchmark on Azure Premium SSD v2 (80k IOPS, 1200 MBps)
+    --pgsql-azure-disk    Run PostgreSQL benchmark on Azure Premium SSD v2 (baseline 3000 IOPS, 125 MBps)
     --cleanup             Reset cluster by removing stale PVCs and pods (keeps ACStor and storage classes)
     --force-new-cluster   Force creation of new AKS cluster (ignores existing cluster)
     --help, -h           Show this help message
@@ -75,7 +75,7 @@ for arg in "$@"; do
             ;;
         --pgsql-azure-disk)
             RUN_MODE="pgsql-azure-disk"
-            echo "Running PostgreSQL benchmark on Azure Premium SSD v2 (80k IOPS, 1200 MBps)"
+            echo "Running PostgreSQL benchmark on Azure Premium SSD v2 (baseline 3000 IOPS, 125 MBps)"
             ;;
         --cleanup)
             RUN_MODE="cleanup"
@@ -279,7 +279,7 @@ spec:
     "kubernetes.io/os": linux
   containers:
     - name: fio
-      image: openeuler/fio
+      image: mayadata/fio
       args: ["sleep", "1000000"]
       volumeMounts:
         - mountPath: "/volume"
@@ -343,7 +343,7 @@ create_cnpg_postgresql_cluster() {
     local storage_class=$1
     local cluster_name="postgres-cnpg-${storage_class//-/}"
     local instances=${2:-3}  # Default to 3 instances for HA
-    local storage_size="100Gi"
+    local storage_size="64Gi"
     
     echo "Creating CNPG PostgreSQL cluster with storage class: $storage_class"
     echo "Cluster name: $cluster_name"
@@ -356,23 +356,18 @@ create_cnpg_postgresql_cluster() {
     kubectl delete cluster "$cluster_name" --ignore-not-found=true 2>/dev/null
     kubectl wait --for=delete cluster/"$cluster_name" --timeout=120s 2>/dev/null || true
     
-    # Set storage size based on storage class
-    if [[ "$storage_class" == "local" ]]; then
-        storage_size="100Gi"
-    elif [[ "$storage_class" == "premium2-disk-sc" ]]; then
-        storage_size="1Ti"
-    else
-        storage_size="8Ti"
-    fi
-    
     # Create CNPG cluster with HA configuration
     # Add inheritedMetadata for local storage if needed
-    local inherited_metadata=""
+    local inherited_metadata_block=""
     if [[ "$storage_class" == "local" ]]; then
-        inherited_metadata='inheritedMetadata:
-    annotations:
-      "localdisk.csi.acstor.io/accept-ephemeral-storage": "true"
-  '
+        inherited_metadata_block=$'  inheritedMetadata:\n    annotations:\n      localdisk.csi.acstor.io/accept-ephemeral-storage: "true"\n'
+    fi
+
+    local storage_block
+    if [[ "$storage_class" == "local" ]]; then
+        storage_block=$'  storage:\n    storageClass: '"$storage_class"$'\n    size: '"$storage_size"$'\n    pvcTemplate:\n      accessModes:\n        - ReadWriteOnce\n      resources:\n        requests:\n          storage: '"$storage_size"$'\n      storageClassName: '"$storage_class"$'\n'
+    else
+        storage_block=$'  storage:\n    storageClass: '"$storage_class"$'\n    size: '"$storage_size"$'\n'
     fi
     
     kubectl apply -f - <<EOF
@@ -381,24 +376,56 @@ kind: Cluster
 metadata:
   name: $cluster_name
 spec:
-  ${inherited_metadata}instances: $instances
-  primaryUpdateStrategy: unsupervised
-  imageName: ghcr.io/cloudnative-pg/postgresql:18.0
+${inherited_metadata_block}  instances: $instances
+  smartShutdownTimeout: 30
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-system-trixie
+
+  probes:
+    startup:
+      type: streaming
+      maximumLag: 32Mi
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 120
+    readiness:
+      type: streaming
+      maximumLag: 0
+      periodSeconds: 10
+      failureThreshold: 6
 
   postgresql:
+    synchronous:
+      method: any
+      number: 1
     parameters:
-      max_wal_size: "32GB"
-      min_wal_size: "8GB"
-      checkpoint_timeout: "15min"
-      shared_buffers: "32GB"
-      effective_cache_size: "96GB"
-      work_mem: "256MB"
-      maintenance_work_mem: "8GB"
-      effective_io_concurrency: "512"
-      autovacuum_vacuum_cost_limit: "5000"
-      synchronous_commit: "off"
+      wal_compression: lz4
+      max_wal_size: 6GB
+      max_slot_wal_keep_size: 10GB
+      checkpoint_timeout: 15min
+      checkpoint_completion_target: "0.9"
+      checkpoint_flush_after: 2MB
+      wal_writer_flush_after: 2MB
+      min_wal_size: 2GB
+      shared_buffers: 32GB
+      effective_cache_size: 96GB
+      work_mem: 512MB
+      maintenance_work_mem: 8GB
+      autovacuum_vacuum_cost_limit: "2400"
       random_page_cost: "1.1"
+      effective_io_concurrency: "64"
+      maintenance_io_concurrency: "64"
+      log_checkpoints: "on"
+      log_lock_waits: "on"
+      log_min_duration_statement: "1000"
+      log_statement: "ddl"
+      log_temp_files: "1024"
+      log_autovacuum_min_duration: "1s"
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: "all"
+      hot_standby_feedback: "on"
       io_method: "io_uring"
+    pg_hba:
+      - host all all all scram-sha-256
 
   bootstrap:
     initdb:
@@ -407,14 +434,9 @@ spec:
       secret:
         name: ${cluster_name}-superuser
       dataChecksums: true
-      
-  storage:
-    storageClass: $storage_class
-    size: $storage_size
-    pvcTemplate:
-      accessModes:
-        - ReadWriteOnce
-      
+
+${storage_block}
+
   enablePDB: true
 EOF
 
@@ -489,12 +511,14 @@ initialize_cnpg_pgbench_database() {
 run_cnpg_pgbench_test() {
     local cluster_name=$1
     local test_name=$2
-    local clients=${3:-8}  # Moderate clients to avoid CPU bottleneck
-    local duration=${4:-300}  # 5 minutes
+    local clients=${3:-16}  # Higher client count to better stress the cluster
+    local duration=${4:-60}  # 1 minute
+    local threads=${5:-4}  # Limit worker threads to reduce contention
     
     echo "=== PostgreSQL CNPG HA Benchmark Test: $test_name ==="
     echo "Cluster: $cluster_name"
     echo "Clients: $clients"
+    echo "Threads: $threads"
     echo "Duration: ${duration}s"
     
     # Get the primary pod name
@@ -513,7 +537,7 @@ run_cnpg_pgbench_test() {
     
     # Run a 2-minute warm-up to stabilize caches
     echo "Running 120-second warm-up..."
-    kubectl exec "$primary_pod" -- pgbench -c "$clients" -j "$clients" -T 120 -U postgres benchmarkdb >/dev/null 2>&1
+    kubectl exec "$primary_pod" -- pgbench -c "$clients" -j "$threads" -T 120 -U postgres benchmarkdb >/dev/null 2>&1
     
     echo ""
     echo "Starting main benchmark test..."
@@ -526,7 +550,7 @@ run_cnpg_pgbench_test() {
     local mixed_output
     if ! mixed_output=$(kubectl exec "$primary_pod" -- pgbench \
         -c "$clients" \
-        -j "$clients" \
+        -j "$threads" \
         -T "$duration" \
         -P 10 \
         -U postgres \
@@ -541,7 +565,7 @@ run_cnpg_pgbench_test() {
     local readonly_output
     if ! readonly_output=$(kubectl exec "$primary_pod" -- pgbench \
         -c "$clients" \
-        -j "$clients" \
+        -j "$threads" \
         -T "$duration" \
         -P 10 \
         -S \
@@ -557,7 +581,7 @@ run_cnpg_pgbench_test() {
     local writeonly_output
     if ! writeonly_output=$(kubectl exec "$primary_pod" -- pgbench \
         -c "$clients" \
-        -j "$clients" \
+        -j "$threads" \
         -T "$duration" \
         -P 10 \
         -N \
@@ -576,6 +600,7 @@ run_cnpg_pgbench_test() {
     log_body+="Cluster: $cluster_name"$'\n'
     log_body+="Storage class: $storage_class"$'\n'
     log_body+="Clients: $clients"$'\n'
+    log_body+="Threads: $threads"$'\n'
     log_body+="Duration: ${duration}s"$'\n'
     log_body+="Timestamp: $readable_timestamp"$'\n'
 
@@ -642,14 +667,14 @@ run_comparative_postgresql_benchmark() {
     apply_premium_v2_storage_class
     
     echo "=== Starting Azure Premium SSD v2 PostgreSQL CNPG HA Benchmark ==="
-    echo "This will test PostgreSQL HA performance on Azure Premium SSD v2 with maximal performance (80k IOPS, 1200 MBps)"
+    echo "This will test PostgreSQL HA performance on Azure Premium SSD v2 with the baseline performance tier (3000 IOPS, 125 MBps)"
     echo ""
     
     # Test: Premium SSD v2 with high performance settings and CNPG HA
     echo "=== Azure Premium SSD v2 CNPG HA Test ==="
     create_cnpg_postgresql_cluster "premium2-disk-sc" 3  # 3 instances for HA
     initialize_cnpg_pgbench_database "postgres-cnpg-premium2disksc"
-    run_cnpg_pgbench_test "postgres-cnpg-premium2disksc" "Azure Premium SSD v2 (80k IOPS, 1200 MBps) with CNPG HA"
+    run_cnpg_pgbench_test "postgres-cnpg-premium2disksc" "Azure Premium SSD v2 (baseline 3000 IOPS, 125 MBps) with CNPG HA"
     
     echo ""
     echo "=== Azure Premium SSD v2 PostgreSQL CNPG HA Benchmark Complete ==="
@@ -663,7 +688,7 @@ run_comparative_postgresql_benchmark() {
     echo "  kubectl describe pv                                                 # View persistent volume details"
     echo ""
     echo "To run additional tests:"
-    echo "  kubectl exec -it $primary_pod -- pgbench -c 8 -j 8 -T 60 -P 10 -U postgres benchmarkdb"
+    echo "  kubectl exec -it $primary_pod -- pgbench -c 16 -j 4 -T 60 -P 10 -U postgres benchmarkdb"
 }
 
 # Function to deploy a Java Minecraft server with PVC on local storage
