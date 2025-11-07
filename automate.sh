@@ -5,6 +5,8 @@ set -e
 # Default values
 RUN_MODE=""
 FORCE_NEW_CLUSTER=false
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+K8S_DIR="${SCRIPT_DIR}/k8s"
 
 sanitize_for_filename() {
     local input="$1"
@@ -227,35 +229,22 @@ install_cnpg_operator() {
 
 # Function to apply storage class
 apply_storage_class() {
-    kubectl apply -f - <<'EOF'
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: local
-provisioner: localdisk.csi.acstor.io
-reclaimPolicy: Delete
-volumeBindingMode: WaitForFirstConsumer
-allowVolumeExpansion: true
-EOF
+    local manifest="${K8S_DIR}/storageclass-local.yaml"
+    if [[ ! -f "$manifest" ]]; then
+        echo "Missing storage class manifest: $manifest"
+        return 1
+    fi
+    kubectl apply -f "$manifest"
 }
 
 # Function to apply Premium SSD v2 storage class
 apply_premium_v2_storage_class() {
-    kubectl apply -f - <<'EOF'
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: premium2-disk-sc
-parameters:
-  cachingMode: None
-  skuName: PremiumV2_LRS
-  DiskIOPSReadWrite: "80000"
-  DiskMBpsReadWrite: "1200"
-provisioner: disk.csi.azure.com
-reclaimPolicy: Delete
-volumeBindingMode: Immediate
-allowVolumeExpansion: true
-EOF
+    local manifest="${K8S_DIR}/storageclass-premium2-disk.yaml"
+    if [[ ! -f "$manifest" ]]; then
+        echo "Missing storage class manifest: $manifest"
+        return 1
+    fi
+    kubectl apply -f "$manifest"
 }
 
 # Note: managed-csi-premium storage class is provided by the preinstalled Azure Disk CSI driver
@@ -269,33 +258,12 @@ create_and_run_fio_pod() {
     kubectl wait --for=delete pod/fiopod --timeout=120s 2>/dev/null || true
     
     # Create fio pod with ephemeral volume
-    kubectl apply -f - <<'EOF'
-kind: Pod
-apiVersion: v1
-metadata:
-  name: fiopod
-spec:
-  nodeSelector:
-    "kubernetes.io/os": linux
-  containers:
-    - name: fio
-      image: mayadata/fio
-      args: ["sleep", "1000000"]
-      volumeMounts:
-        - mountPath: "/volume"
-          name: ephemeralvolume
-  volumes:
-    - name: ephemeralvolume
-      ephemeral:
-        volumeClaimTemplate:
-          spec:
-            resources:
-              requests:
-                storage: 10Gi
-            volumeMode: Filesystem
-            accessModes: ["ReadWriteOnce"]
-            storageClassName: local
-EOF
+    local manifest="${K8S_DIR}/fio-pod.yaml"
+    if [[ ! -f "$manifest" ]]; then
+        echo "Missing fio manifest: $manifest"
+        return 1
+    fi
+    kubectl apply -f "$manifest"
     
     echo "Waiting for pod to be ready..."
     kubectl wait --for=condition=Ready pod/fiopod --timeout=300s
@@ -341,13 +309,31 @@ EOF
 # Function to create CNPG PostgreSQL cluster with HA
 create_cnpg_postgresql_cluster() {
     local storage_class=$1
-    local cluster_name="postgres-cnpg-${storage_class//-/}"
-    local instances=${2:-3}  # Default to 3 instances for HA
-    local storage_size="64Gi"
+    local manifest cluster_name
+    
+    case "$storage_class" in
+        local)
+            cluster_name="postgres-cnpg-local"
+            manifest="${K8S_DIR}/postgres-cnpg-local.yaml"
+            ;;
+        premium2-disk-sc)
+            cluster_name="postgres-cnpg-premium2disksc"
+            manifest="${K8S_DIR}/postgres-cnpg-premium2disksc.yaml"
+            ;;
+        *)
+            echo "Unsupported storage class: $storage_class"
+            return 1
+            ;;
+    esac
+    
+    if [[ ! -f "$manifest" ]]; then
+        echo "Missing CNPG manifest for $storage_class: $manifest"
+        return 1
+    fi
     
     echo "Creating CNPG PostgreSQL cluster with storage class: $storage_class"
     echo "Cluster name: $cluster_name"
-    echo "Instances: $instances (1 primary + $(($instances-1)) replicas)"
+    echo "Manifest: $manifest (edit to customize instances and tuning)"
     
     # Ensure CNPG operator is installed
     install_cnpg_operator
@@ -356,104 +342,12 @@ create_cnpg_postgresql_cluster() {
     kubectl delete cluster "$cluster_name" --ignore-not-found=true 2>/dev/null
     kubectl wait --for=delete cluster/"$cluster_name" --timeout=120s 2>/dev/null || true
     
-    # Create CNPG cluster with HA configuration
-    # Add inheritedMetadata for local storage if needed
-    local inherited_metadata_block=""
-    if [[ "$storage_class" == "local" ]]; then
-        inherited_metadata_block=$'  inheritedMetadata:\n    annotations:\n      localdisk.csi.acstor.io/accept-ephemeral-storage: "true"\n'
-    fi
-
-    local storage_block
-    if [[ "$storage_class" == "local" ]]; then
-        storage_block=$'  storage:\n    storageClass: '"$storage_class"$'\n    size: '"$storage_size"$'\n    pvcTemplate:\n      accessModes:\n        - ReadWriteOnce\n      resources:\n        requests:\n          storage: '"$storage_size"$'\n      storageClassName: '"$storage_class"$'\n'
-    else
-        storage_block=$'  storage:\n    storageClass: '"$storage_class"$'\n    size: '"$storage_size"$'\n'
-    fi
-    
-    kubectl apply -f - <<EOF
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
-metadata:
-  name: $cluster_name
-spec:
-${inherited_metadata_block}  instances: $instances
-  smartShutdownTimeout: 30
-  imageName: ghcr.io/cloudnative-pg/postgresql:18-system-trixie
-
-  probes:
-    startup:
-      type: streaming
-      maximumLag: 32Mi
-      periodSeconds: 5
-      timeoutSeconds: 3
-      failureThreshold: 120
-    readiness:
-      type: streaming
-      maximumLag: 0
-      periodSeconds: 10
-      failureThreshold: 6
-
-  postgresql:
-    synchronous:
-      method: any
-      number: 1
-    parameters:
-      wal_compression: lz4
-      max_wal_size: 6GB
-      max_slot_wal_keep_size: 10GB
-      checkpoint_timeout: 15min
-      checkpoint_completion_target: "0.9"
-      checkpoint_flush_after: 2MB
-      wal_writer_flush_after: 2MB
-      min_wal_size: 2GB
-      shared_buffers: 32GB
-      effective_cache_size: 96GB
-      work_mem: 512MB
-      maintenance_work_mem: 8GB
-      autovacuum_vacuum_cost_limit: "2400"
-      random_page_cost: "1.1"
-      effective_io_concurrency: "64"
-      maintenance_io_concurrency: "64"
-      log_checkpoints: "on"
-      log_lock_waits: "on"
-      log_min_duration_statement: "1000"
-      log_statement: "ddl"
-      log_temp_files: "1024"
-      log_autovacuum_min_duration: "1s"
-      pg_stat_statements.max: "10000"
-      pg_stat_statements.track: "all"
-      hot_standby_feedback: "on"
-      io_method: "io_uring"
-    pg_hba:
-      - host all all all scram-sha-256
-
-  bootstrap:
-    initdb:
-      database: benchmarkdb
-      owner: postgres
-      secret:
-        name: ${cluster_name}-superuser
-      dataChecksums: true
-
-${storage_block}
-
-  enablePDB: true
-EOF
-
-    # Create superuser secret
-    kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Secret
-metadata:
-  name: ${cluster_name}-superuser
-type: kubernetes.io/basic-auth
-stringData:
-  username: postgres
-  password: benchmark123
-EOF
+    # Apply manifest containing both Cluster and Secret definitions
+    kubectl apply -f "$manifest"
     
     echo "Waiting for CNPG cluster to be ready..."
     local retries=60
+    local total_instances="?"
     while [ $retries -gt 0 ]; do
         if kubectl get cluster "$cluster_name" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Cluster in healthy state"; then
             echo "CNPG cluster is ready!"
@@ -463,8 +357,10 @@ EOF
         # Check if at least primary is ready
         local ready_instances=$(kubectl get cluster "$cluster_name" -o jsonpath='{.status.readyInstances}' 2>/dev/null)
         ready_instances=${ready_instances:-0}
+        total_instances=$(kubectl get cluster "$cluster_name" -o jsonpath='{.spec.instances}' 2>/dev/null)
+        total_instances=${total_instances:-"?"}
         if [ "$ready_instances" -ge 1 ]; then
-            echo "Primary instance is ready (${ready_instances}/${instances} instances ready)"
+            echo "Primary instance is ready (${ready_instances}/${total_instances} instances ready)"
             break
         fi
         

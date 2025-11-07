@@ -1,0 +1,13 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: premium2-disk-sc
+parameters:
+  cachingMode: None
+  skuName: PremiumV2_LRS
+  DiskIOPSReadWrite: "80000"
+  DiskMBpsReadWrite: "1200"
+provisioner: disk.csi.azure.com
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true

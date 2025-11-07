@@ -46,6 +46,17 @@ The `automate.sh` script supports multiple test modes. Run without arguments to 
 
 By default, the script will detect and reuse an existing AKS cluster with Azure Container Storage v2.0.0 if available.
 
+## Kubernetes Manifests
+
+All Kubernetes objects used by `automate.sh` now live under the `k8s/` directory so you can tweak and apply them manually:
+
+- `k8s/storageclass-local.yaml` – Azure Container Storage local NVMe provisioner
+- `k8s/storageclass-premium2-disk.yaml` – Azure Premium SSD v2 storage class
+- `k8s/postgres-cnpg-local.yaml` and `k8s/postgres-cnpg-premium2disksc.yaml` – CNPG HA clusters plus superuser secrets
+- `k8s/fio-pod.yaml` – fio benchmark pod with ephemeral volume
+
+Use `kubectl apply -f <manifest>` to recreate any component outside of the automation script or to iterate on configuration changes.
+
 ## Cleanup Operations
 
 ### nuke.sh - Destructive Operations Utility

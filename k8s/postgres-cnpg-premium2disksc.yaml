@@ -1,0 +1,78 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres-cnpg-premium2disksc
+spec:
+  instances: 3
+  smartShutdownTimeout: 30
+  imageName: ghcr.io/cloudnative-pg/postgresql:18-system-trixie
+
+  probes:
+    startup:
+      type: streaming
+      maximumLag: 32Mi
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 120
+    readiness:
+      type: streaming
+      maximumLag: 0
+      periodSeconds: 10
+      failureThreshold: 6
+
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+    parameters:
+      wal_compression: lz4
+      max_wal_size: 6GB
+      max_slot_wal_keep_size: 10GB
+      checkpoint_timeout: 15min
+      checkpoint_completion_target: "0.9"
+      checkpoint_flush_after: 2MB
+      wal_writer_flush_after: 2MB
+      min_wal_size: 2GB
+      shared_buffers: 32GB
+      effective_cache_size: 96GB
+      work_mem: 512MB
+      maintenance_work_mem: 8GB
+      autovacuum_vacuum_cost_limit: "2400"
+      random_page_cost: "1.1"
+      effective_io_concurrency: "64"
+      maintenance_io_concurrency: "64"
+      log_checkpoints: "on"
+      log_lock_waits: "on"
+      log_min_duration_statement: "1000"
+      log_statement: "ddl"
+      log_temp_files: "1024"
+      log_autovacuum_min_duration: "1s"
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: "all"
+      hot_standby_feedback: "on"
+      io_method: "io_uring"
+    pg_hba:
+      - host all all all scram-sha-256
+
+  bootstrap:
+    initdb:
+      database: benchmarkdb
+      owner: postgres
+      secret:
+        name: postgres-cnpg-premium2disksc-superuser
+      dataChecksums: true
+
+  storage:
+    storageClass: premium2-disk-sc
+    size: 64Gi
+
+  enablePDB: true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-cnpg-premium2disksc-superuser
+type: kubernetes.io/basic-auth
+stringData:
+  username: postgres
+  password: benchmark123
