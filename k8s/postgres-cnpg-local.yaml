@@ -57,12 +57,15 @@ spec:
     pg_hba:
       - host all all all scram-sha-256
 
+  superuserSecret:
+    name: postgres-cnpg-local-app
+
   bootstrap:
     initdb:
       database: benchmarkdb
       owner: postgres
       secret:
-        name: postgres-cnpg-local-superuser
+        name: postgres-cnpg-local-app
       dataChecksums: true
 
   storage:
@@ -81,7 +84,7 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: postgres-cnpg-local-superuser
+  name: postgres-cnpg-local-app
 type: kubernetes.io/basic-auth
 stringData:
   username: postgres

@@ -8,9 +8,11 @@ This repository contains automation scripts for deploying and testing Azure Cont
 
 - **`automate.sh`** - Comprehensive AKS cluster automation with multiple test modes:
   - IOPS and bandwidth testing with fio
+  - Host-level NVMe latency checks powered by ioping (configurable with `IOPING_SAMPLES`/`IOPING_DEVICE`)
   - PostgreSQL benchmarking with CNPG (CloudNativePG) operator
   - Support for local NVMe and Azure Premium SSD v2 storage
   - Cluster cleanup and management capabilities
+- **`ioping-check.sh`** - Standalone helper that deploys the privileged ioping pod and runs latency probes against `/host-dev` devices
 - **`nuke.sh`** - Destructive operations utility with two modes:
   - `contexts` - Clean up stale/unreachable kubectl contexts
   - `resources` - Delete all Azure resource groups matching pattern (ericcheng-*)
@@ -29,7 +31,8 @@ The `automate.sh` script supports multiple test modes. Run without arguments to 
 **Available Test Modes:**
 
 - `--iops` - Run IOPS test (4k block size) with fio
-- `--bandwidth` - Run bandwidth test (128k block size) with fio  
+- `--bandwidth` - Run bandwidth test (128k block size) with fio
+- `--ioping` - Run host-level latency probe with ioping (defaults to `/host-dev/nvme0n1`, override with `IOPING_DEVICE`; adjust duration with `IOPING_SAMPLES`)
 - `--pgsql` - Run PostgreSQL benchmark on local NVMe + Azure Container Storage
 - `--pgsql-azure-disk` - Run PostgreSQL benchmark on Azure Premium SSD v2 (80k IOPS, 1200 MBps)
 - `--cleanup` - Reset cluster by removing stale PVCs and pods (keeps ACStor and storage classes)
@@ -42,6 +45,7 @@ The `automate.sh` script supports multiple test modes. Run without arguments to 
 ./automate.sh --pgsql                   # Run PostgreSQL benchmark
 ./automate.sh --cleanup                 # Clean up stale resources
 ./automate.sh --iops --force-new-cluster # Force new cluster and run IOPS test
+IOPING_SAMPLES=50000 ./automate.sh --ioping # Run deep latency probe (env vars optional)
 ```
 
 By default, the script will detect and reuse an existing AKS cluster with Azure Container Storage v2.0.0 if available.
@@ -54,6 +58,7 @@ All Kubernetes objects used by `automate.sh` now live under the `k8s/` directory
 - `k8s/storageclass-premium2-disk.yaml` – Azure Premium SSD v2 storage class
 - `k8s/postgres-cnpg-local.yaml` and `k8s/postgres-cnpg-premium2disksc.yaml` – CNPG HA clusters plus superuser secrets
 - `k8s/fio-pod.yaml` – fio benchmark pod with ephemeral volume
+- `k8s/ioping-pod.yaml` – privileged helper pod that exposes `/host-dev` for ioping latency tests
 
 Use `kubectl apply -f <manifest>` to recreate any component outside of the automation script or to iterate on configuration changes.
 
@@ -91,6 +96,7 @@ The `nuke.sh` script provides safe cleanup operations with preview mode by defau
 - **Multiple Test Modes:**
   - IOPS testing with fio (4k block size)
   - Bandwidth testing with fio (128k block size)
+  - Host latency validation via ioping
   - PostgreSQL benchmarking with CloudNativePG (CNPG) operator
   - High Availability PostgreSQL with 3-instance CNPG clusters
 

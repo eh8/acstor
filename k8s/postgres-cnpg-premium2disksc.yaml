@@ -54,12 +54,15 @@ spec:
     pg_hba:
       - host all all all scram-sha-256
 
+  superuserSecret:
+    name: postgres-cnpg-premium2disksc-app
+
   bootstrap:
     initdb:
       database: benchmarkdb
       owner: postgres
       secret:
-        name: postgres-cnpg-premium2disksc-superuser
+        name: postgres-cnpg-premium2disksc-app
       dataChecksums: true
 
   storage:
@@ -71,7 +74,7 @@ spec:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: postgres-cnpg-premium2disksc-superuser
+  name: postgres-cnpg-premium2disksc-app
 type: kubernetes.io/basic-auth
 stringData:
   username: postgres

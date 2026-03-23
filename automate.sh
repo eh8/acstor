@@ -37,6 +37,7 @@ Usage: $0 [OPTIONS]
 OPTIONS:
     --iops                Run IOPS test mode (4k block size)
     --bandwidth           Run bandwidth test mode (128k block size)
+    --ioping              Run host-level latency test with ioping (defaults to /host-dev/nvme0n1)
     --pgsql               Run PostgreSQL benchmark on local NVMe + Azure Container Storage
     --pgsql-azure-disk    Run PostgreSQL benchmark on Azure Premium SSD v2 (baseline 3000 IOPS, 125 MBps)
     --cleanup             Reset cluster by removing stale PVCs and pods (keeps ACStor and storage classes)
@@ -46,6 +47,7 @@ OPTIONS:
 EXAMPLES:
     $0 --iops                    # Run IOPS test on existing or new cluster
     $0 --bandwidth               # Run bandwidth test on existing or new cluster
+    $0 --ioping                  # Run ioping latency probe on AKS nodes
     $0 --pgsql                   # Run PostgreSQL benchmark on local NVMe storage
     $0 --pgsql-azure-disk        # Run PostgreSQL benchmark on Azure Premium SSD v2
     $0 --cleanup                 # Clean up stale resources
@@ -56,6 +58,7 @@ NOTES:
     - The script will reuse existing AKS clusters with Azure Container Storage v2.0.0
     - Use --force-new-cluster to always create a fresh cluster
     - Cleanup mode preserves ACStor components and storage classes
+    - Set IOPING_SAMPLES and IOPING_DEVICE to customize ioping duration or device
 
 EOF
 }
@@ -70,6 +73,10 @@ for arg in "$@"; do
         --bandwidth)
             RUN_MODE="bandwidth"
             echo "Running in bandwidth test mode (128k block size)"
+            ;;
+        --ioping)
+            RUN_MODE="ioping"
+            echo "Running host-level latency check with ioping"
             ;;
         --pgsql)
             RUN_MODE="pgsql"
@@ -304,6 +311,56 @@ create_and_run_fio_pod() {
     echo "  kubectl get pods"
     echo "  kubectl get pvc"
     echo "  kubectl get sc"
+}
+
+run_ioping_latency_test() {
+    local manifest="${K8S_DIR}/ioping-pod.yaml"
+    local samples="${IOPING_SAMPLES:-20000}"
+    local device="${IOPING_DEVICE:-/host-dev/nvme0n1}"
+
+    if [[ ! -f "$manifest" ]]; then
+        echo "Missing ioping manifest: $manifest"
+        return 1
+    fi
+
+    echo "Running ioping latency check with ${samples} samples on device ${device}"
+
+    kubectl delete pod iopingpod --ignore-not-found=true
+    kubectl wait --for=delete pod/iopingpod --timeout=120s 2>/dev/null || true
+
+    kubectl apply -f "$manifest"
+    kubectl wait --for=condition=Ready pod/iopingpod --timeout=180s
+
+    local ioping_output
+    if ! ioping_output=$(kubectl exec iopingpod -- ioping \
+        -D -q \
+        -i 0 \
+        -c "$samples" \
+        -s 4k \
+        -S 8m \
+        -o 0 \
+        "$device"); then
+        echo "ioping command failed"
+        return 1
+    fi
+
+    printf '%s\n' "$ioping_output"
+
+    local readable_timestamp
+    readable_timestamp=$(date +"%Y-%m-%d %H:%M:%S %Z")
+    local log_label="ioping-latency"
+    local log_body=$'Test: ioping latency\n'
+    log_body+="Device: $device"$'\n'
+    log_body+="Samples: $samples"$'\n'
+    log_body+="Timestamp: $readable_timestamp"$'\n\n'
+    log_body+="Results:"$'\n'
+    log_body+=$(printf '%s\n' "$ioping_output" | tr -d '\r')
+
+    write_acstor_log_file "$log_label" "$log_body"
+
+    echo "Cleaning up ioping pod..."
+    kubectl delete pod iopingpod --ignore-not-found=true >/dev/null 2>&1 || true
+    echo -e "\nioping latency test completed successfully!\n"
 }
 
 # Function to create CNPG PostgreSQL cluster with HA
@@ -658,6 +715,18 @@ case $RUN_MODE in
             echo "${FORCE_NEW_CLUSTER:+Forcing creation of new AKS cluster...}${FORCE_NEW_CLUSTER:-No existing AKS cluster with Azure Container Storage v2.0.0 found. Creating new cluster...}"
             create_new_cluster
             run_comparative_postgresql_benchmark
+        fi
+        ;;
+    ioping)
+        if [[ "$FORCE_NEW_CLUSTER" == "false" ]] && check_existing_cluster; then
+            echo "Using existing cluster, running ioping latency check..."
+            apply_storage_class
+            run_ioping_latency_test
+        else
+            echo "${FORCE_NEW_CLUSTER:+Forcing creation of new AKS cluster...}${FORCE_NEW_CLUSTER:-No existing AKS cluster with Azure Container Storage v2.0.0 found. Creating new cluster...}"
+            create_new_cluster
+            apply_storage_class
+            run_ioping_latency_test
         fi
         ;;
 esac
